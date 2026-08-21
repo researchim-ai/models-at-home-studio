@@ -1,0 +1,115 @@
+# Models at Home Studio — Electron Backend
+#
+# docker compose up --build
+#
+# The Electron app manages this automatically, but you can run it standalone.
+
+services:
+  backend:
+    image: models-at-home-studio:latest
+    build:
+      context: ./models-at-home
+      dockerfile: Dockerfile
+      args:
+        LLAMA_CPP_BACKEND: ${LLAMA_CPP_BACKEND:-vulkan}
+    container_name: mah-studio-backend
+    user: "${UID:-1000}:${GID:-1000}"
+    ports:
+      - "8000:8000"
+      - "8888:8888"
+    volumes:
+      - ./models-at-home/datasets:/app/datasets
+      - ./models-at-home/out:/app/out
+      - ./models-at-home/.runs:/app/.runs
+      - ./models-at-home/blueprints:/app/blueprints
+      - ./models-at-home/models:/app/models
+      - ./models-at-home/configs:/app/configs
+      - ./backend:/app/backend
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MODELS_AT_HOME_ROOT=/app
+      - MKL_THREADING_LAYER=GNU
+      - HOME=/tmp
+      - XDG_CACHE_HOME=/tmp/.cache
+      - HF_HOME=/tmp/.cache/huggingface
+      - HF_DATASETS_CACHE=/tmp/.cache/huggingface/datasets
+      - HUGGINGFACE_HUB_CACHE=/tmp/.cache/huggingface/hub
+      - TRITON_CACHE_DIR=/tmp/.cache/triton
+      - TORCH_HOME=/tmp/.cache/torch
+      - TORCHINDUCTOR_CACHE_DIR=/tmp/.cache/torchinductor
+      - CUDA_CACHE_PATH=/tmp/.cache/nv
+      - NUMBA_CACHE_DIR=/tmp/.cache/numba
+      - MPLCONFIGDIR=/tmp/.cache/matplotlib
+      - PIP_CACHE_DIR=/tmp/.cache/pip
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - MAH_AGENT_AUTOLOAD=${MAH_AGENT_AUTOLOAD:-1}
+      - MAH_AGENT_CPU_ONLY=${MAH_AGENT_CPU_ONLY:-0}
+      - MAH_AGENT_CTX_SIZE=${MAH_AGENT_CTX_SIZE:-262144}
+      - MAH_AGENT_GPU_LAYERS=${MAH_AGENT_GPU_LAYERS:--1}
+      - MAH_AGENT_MODEL=${MAH_AGENT_MODEL:-}
+      - MAH_AGENT_MODEL_REPO=${MAH_AGENT_MODEL_REPO:-unsloth/Qwen3.5-9B-GGUF}
+      - MAH_AGENT_MODEL_QUANT=${MAH_AGENT_MODEL_QUANT:-9B-UD-Q4_K_XL}
+      - MAH_AGENT_MODEL_FILENAME=${MAH_AGENT_MODEL_FILENAME:-}
+      - NCCL_DEBUG=WARN
+    shm_size: "8gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: >
+      bash -lc "
+      pip install --no-cache-dir fastapi 'uvicorn[standard]' websockets 2>/dev/null ;
+      python -m uvicorn backend.api:app --host 0.0.0.0 --port 8000
+      "
+    restart: unless-stopped
+
+  notebooks:
+    image: models-at-home-studio:latest
+    container_name: mah-studio-notebooks
+    user: "${UID:-1000}:${GID:-1000}"
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./models-at-home/datasets:/app/datasets
+      - ./models-at-home/out:/app/out
+      - ./models-at-home/.runs:/app/.runs
+      - ./models-at-home/models:/app/models
+      - ./models-at-home/configs:/app/configs
+      - ./models-at-home/notebooks:/app/notebooks
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MODELS_AT_HOME_ROOT=/app
+      - MKL_THREADING_LAYER=GNU
+      - HOME=/tmp
+      - XDG_CACHE_HOME=/tmp/.cache
+      - HF_HOME=/tmp/.cache/huggingface
+      - JUPYTER_TOKEN=${JUPYTER_TOKEN:-mah-local}
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    shm_size: "8gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: >
+      bash -lc "
+      mkdir -p /tmp/.ipython/profile_default/startup /app/notebooks &&
+      cp /app/scripts/jupyter/startup/00_homellm.py /tmp/.ipython/profile_default/startup/00_homellm.py &&
+      jupyter lab
+      --ip=0.0.0.0
+      --port=8888
+      --no-browser
+      --ServerApp.allow_origin='*'
+      --ServerApp.allow_remote_access=True
+      --IdentityProvider.token='${JUPYTER_TOKEN:-mah-local}'
+      --ServerApp.password=''
+      --ServerApp.root_dir=/app/notebooks
+      "
+    restart: unless-stopped
+    profiles:
+      - notebooks

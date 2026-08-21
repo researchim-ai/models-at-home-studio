@@ -1,0 +1,21 @@
+# Heavy ML data — never needed in the Docker build context.
+# The studio image only needs backend/ (FROM models-at-home-base:latest already
+# contains the homellm code). These dirs can be hundreds of GB.
+models-at-home/out
+models-at-home/datasets
+models-at-home/models
+models-at-home/.runs
+models-at-home/**/__pycache__
+
+# JS / build artifacts
+node_modules
+dist
+dist-electron
+release
+build
+
+# VCS / editor / OS
+.git
+.gitignore
+**/*.log
+.DS_Store
