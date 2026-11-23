@@ -180,6 +180,8 @@ function ChatPanel() {
   const [input, setInput] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const streamRef = useRef<AbortController | null>(null)
+  useEffect(() => () => streamRef.current?.abort(), [])
 
   const isRunning = serverStatus?.running ?? false
 
@@ -224,7 +226,7 @@ function ChatPanel() {
     let assistantContent = ''
     setMessages((prev) => [...prev, { role: 'assistant', content: '' }])
 
-    createAgentChatStream(
+    streamRef.current = createAgentChatStream(
       activeSession,
       sentMessage,
       (text) => {
@@ -263,7 +265,7 @@ function ChatPanel() {
     <div className="flex flex-col h-full">
       {/* Session tabs */}
       <div className="flex items-center gap-2 border-b border-border px-4 py-2">
-        <Button variant="outline" size="sm" onClick={handleNewSession}>
+        <Button variant="outline" size="sm" onClick={handleNewSession} disabled={isGenerating}>
           <Plus className="h-3.5 w-3.5" />
           {t('agent.new_session')}
         </Button>
@@ -273,6 +275,7 @@ function ChatPanel() {
               <Button
                 variant={activeSession === s.id ? 'secondary' : 'ghost'}
                 size="sm"
+                disabled={isGenerating}
                 onClick={() => { setActiveSession(s.id); setMessages(s.messages ?? []) }}
                 className="rounded-r-none text-xs max-w-[180px]"
                 title={s.name || s.id}
@@ -283,6 +286,7 @@ function ChatPanel() {
               <Button
                 variant={activeSession === s.id ? 'secondary' : 'ghost'}
                 size="icon"
+                disabled={isGenerating}
                 onClick={() => handleDeleteSession(s.id)}
                 className="h-8 w-8 rounded-l-none border-l border-border/60"
               >

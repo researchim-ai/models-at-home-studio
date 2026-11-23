@@ -29,6 +29,8 @@ function lazyWithReload<T extends ComponentType<unknown>>(
 }
 
 const TrainingStudio = lazyWithReload(() => import('@/pages/TrainingStudio').then((m) => ({ default: m.TrainingStudio })))
+const WorldModelsStudio = lazyWithReload(() => import('@/pages/WorldModelsStudio').then(m => ({ default: m.WorldModelsStudio })))
+const VLAStudio = lazyWithReload(() => import('@/pages/VLAStudio').then(m => ({ default: m.VLAStudio })))
 const VLMStudio = lazyWithReload(() => import('@/pages/VLMStudio').then((m) => ({ default: m.VLMStudio })))
 const ModelBuilder = lazyWithReload(() => import('@/pages/ModelBuilder').then((m) => ({ default: m.ModelBuilder })))
 const StudyCenter = lazyWithReload(() => import('@/pages/StudyCenter').then((m) => ({ default: m.StudyCenter })))
@@ -50,6 +52,8 @@ export default function App() {
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<Suspense fallback={<PageFallback />}><TrainingStudio /></Suspense>} />
+          <Route path="/world-models" element={<Suspense fallback={<PageFallback />}><WorldModelsStudio /></Suspense>} />
+          <Route path="/vla" element={<Suspense fallback={<PageFallback />}><VLAStudio /></Suspense>} />
           <Route path="/vlm" element={<Suspense fallback={<PageFallback />}><VLMStudio /></Suspense>} />
           <Route path="/builder" element={<Suspense fallback={<PageFallback />}><ModelBuilder /></Suspense>} />
           <Route path="/study" element={<Suspense fallback={<PageFallback />}><StudyCenter /></Suspense>} />

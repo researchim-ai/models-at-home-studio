@@ -1,4 +1,5 @@
 {
+  "builder.train": "Train this model",
   "nav.training": "Training Studio",
   "nav.vlm": "VLM Studio",
   "nav.builder": "Model Builder",
@@ -6,14 +7,11 @@
   "nav.notebooks": "Notebooks",
   "nav.agent": "Agent Studio",
   "nav.settings": "Settings",
-
   "docker.running": "Running",
   "docker.stopped": "Stopped",
   "docker.building": "Building...",
-
   "app.title": "HomeLLM Training Studio",
   "app.subtitle": "Train models at home",
-
   "sidebar.training_stage": "Training Stage",
   "sidebar.base_model": "Base Model",
   "sidebar.hyperparams": "Hyperparameters",
@@ -21,31 +19,26 @@
   "sidebar.gpu_memory": "GPU Memory",
   "sidebar.tuning_method": "Tuning Method",
   "sidebar.architecture": "Model Architecture",
-
   "arch.title": "Architecture",
   "arch.hidden_size": "Hidden Size",
   "arch.num_layers": "Num Layers",
   "arch.n_heads": "Attention Heads",
   "arch.num_experts": "Num Experts",
   "arch.experts_per_tok": "Top-K (active experts)",
-
   "tuning.lora_r": "LoRA r (rank)",
   "tuning.lora_alpha": "LoRA alpha",
   "tuning.lora_dropout": "LoRA dropout",
   "tuning.target_modules": "Target modules",
-
   "stage.pretrain": "Pretrain",
   "stage.continual_pretrain": "Continual Pretrain",
   "stage.sft": "SFT (Fine-tuning)",
   "stage.grpo": "GRPO (Reinforcement Learning)",
-
   "model.select": "Select Model",
   "model.type": "Model Type",
   "model.architecture": "Architecture",
   "model.path": "Model Path",
   "model.params": "Parameters",
   "model.downloaded": "Downloaded Models",
-
   "training.batch_size": "Batch Size",
   "training.gradient_accumulation": "Gradient Accumulation",
   "training.effective_batch": "Effective Batch Size",
@@ -62,28 +55,23 @@
   "training.mode": "Training Mode",
   "training.mode_epochs": "Epochs",
   "training.mode_steps": "Max Steps",
-
   "precision.mixed": "Mixed Precision",
   "precision.fp16_pure": "FP16 Pure (no GradScaler)",
   "precision.grad_checkpoint": "Gradient Checkpointing",
   "precision.flash_attention": "Flash Attention",
   "precision.liger_kernel": "Liger Kernel",
   "precision.liger_fused_ce": "Fused Loss (memory saving)",
-
   "lora.method": "LoRA Method",
   "lora.rank": "Rank",
   "lora.alpha": "Alpha",
   "lora.dropout": "Dropout",
   "lora.target_modules": "Target Modules",
-
   "grpo.group_size": "Group Size",
   "grpo.temperature": "Temperature",
   "grpo.max_new_tokens": "Max New Tokens",
   "grpo.kl_weight": "KL Weight",
-
   "parallel.mode": "Parallelism Mode",
   "parallel.single_gpu": "Single GPU",
-
   "data.select_dataset": "Select Dataset",
   "data.download_hf": "Download from HuggingFace",
   "data.available_datasets": "Available Datasets",
@@ -93,13 +81,11 @@
   "data.split": "Split",
   "data.save_as": "Save As",
   "data.local_datasets": "Local Datasets",
-
   "save.output_dir": "Output Directory",
   "save.save_every": "Save Every N Steps",
   "save.log_every": "Log Every N Steps",
   "save.export_on_checkpoint": "Export final_model on each checkpoint",
   "save.merge_lora": "Merge LoRA into final_model",
-
   "tabs.launch": "Launch",
   "tabs.monitoring": "Monitoring",
   "tabs.chat": "Chat",
@@ -107,11 +93,9 @@
   "tabs.data": "Data",
   "tabs.models": "Models",
   "tabs.docs": "Documentation",
-
   "launch.config_title": "Training Configuration",
   "launch.model": "Model",
   "launch.data": "Data",
-
   "status.running": "Running",
   "status.completed": "Completed",
   "status.error": "Error",
@@ -119,14 +103,12 @@
   "status.initializing": "Initializing",
   "status.step": "Step",
   "status.time": "Elapsed Time",
-
   "metrics.train_loss": "Training Loss",
   "metrics.val_loss": "Validation Loss",
   "metrics.reward": "Reward",
   "metrics.kl_divergence": "KL Divergence",
   "metrics.grad_norm": "Gradient Norm",
   "metrics.gpu_load": "GPU Load",
-
   "button.start_training": "Start Training",
   "button.stop_training": "Stop Training",
   "button.start_grpo": "Start GRPO",
@@ -138,7 +120,6 @@
   "button.continue_training": "Continue Training",
   "button.export_model": "Export Model",
   "button.clear_history": "Clear History",
-
   "chat.title": "Chat",
   "chat.model_select": "Select Model",
   "chat.system_prompt": "System Prompt",
@@ -146,32 +127,26 @@
   "chat.inference_backend": "Inference Backend",
   "chat.message_placeholder": "Type a message...",
   "chat.thinking": "Thinking...",
-
   "models.manager": "Model Manager",
   "models.download_hf": "Download from HuggingFace",
   "models.model_id": "Model ID",
   "models.local_models": "Local Models",
   "models.trained_models": "Trained Models",
-
   "history.title": "Training History",
-
   "gpu.found": "GPU Found",
   "gpu.not_found": "No GPU Found",
   "gpu.vram": "VRAM",
   "gpu.utilization": "Utilization",
-
   "settings.title": "Settings",
   "settings.language": "Language",
   "settings.theme": "Theme",
   "settings.docker": "Docker Settings",
   "settings.api_url": "Backend API URL",
-
   "vlm.title": "VLM Studio",
   "vlm.subtitle": "Visual Language Model Training",
   "vlm.stage.sft": "VLM Fine-tuning",
   "vlm.stage.pretrain": "VLM Pre-training",
   "vlm.stage.grpo": "VLM GRPO",
-
   "agent.title": "Agent Studio",
   "agent.subtitle": "Chat with AI Agent powered by llama.cpp",
   "agent.start_server": "Start Server",
@@ -199,20 +174,16 @@
   "agent.session_deleted": "Session deleted",
   "agent.server_required": "Start the llama-server first",
   "agent.start_session_hint": "Create a new session to start chatting",
-
   "builder.title": "Visual Model Builder",
   "builder.subtitle": "Design model architectures visually",
   "builder.blocks": "Blocks",
   "builder.save": "Save Blueprint",
   "builder.analyze": "Analyze",
-
   "study.title": "Study Center",
   "study.subtitle": "Learning materials for ML/AI",
-
   "notebooks.title": "Notebooks",
   "notebooks.subtitle": "JupyterLab Integration",
   "notebooks.open": "Open JupyterLab",
-
   "common.loading": "Loading...",
   "common.none": "None",
   "common.enabled": "Enabled",
@@ -227,19 +198,15 @@
   "common.path": "Path",
   "common.date": "Date",
   "common.status": "Status",
-
   "error.generic": "An error occurred",
   "error.no_model": "No model selected",
   "error.no_dataset": "No dataset selected",
-
   "success.training_complete": "Training completed successfully",
   "success.downloaded": "Download completed",
-
   "onboarding.title": "Welcome to Models at Home!",
   "onboarding.subtitle": "Let's get you set up",
   "onboarding.language": "Choose your language",
   "onboarding.theme": "Choose your theme",
-
   "launch.model_preview": "Model Preview",
   "launch.arch_from_scratch": "Architecture (from scratch)",
   "launch.no_base_model": "No base model selected",
@@ -249,15 +216,12 @@
   "launch.training_mode": "Training Mode",
   "launch.not_selected": "Not selected",
   "launch.not_ready_hint": "Select a model, data and training mode first",
-
   "metrics.title": "Monitoring",
   "metrics.kl": "KL Divergence",
-
   "monitoring.select_run": "Select a run in History to see live metrics",
   "monitoring.logs": "Logs",
   "monitoring.gpu_stats": "GPU Statistics",
   "monitoring.util": "Utilization",
-
   "chat.gen_params": "Generation Parameters",
   "chat.clear": "Clear chat",
   "chat.temperature": "Temperature",
@@ -269,17 +233,14 @@
   "chat.sys_reasoning": "Reasoning",
   "chat.sys_coder": "Programmer",
   "chat.sys_translator": "Translator",
-
   "history.empty": "No previous runs yet",
   "history.checkpoints": "Checkpoints",
   "history.continue": "Continue",
   "history.confirm_delete": "Delete this run?",
   "history.chat_selected": "Model selected for chat",
-
   "common.yes": "Yes",
   "common.no": "No",
   "common.delete": "Delete",
-
   "data.presets_for": "Presets for",
   "data.repo_id": "Repository (ID)",
   "data.subset": "Subset / Config",
@@ -288,13 +249,11 @@
   "data.empty": "No local datasets yet",
   "data.selected": "Dataset selected",
   "data.selected_badge": "selected",
-
   "models.save_name": "Save as name",
   "models.use": "Use",
   "models.use_as_base": "Use as base model",
   "models.used_as_base": "Set as base model",
   "models.empty": "No models found",
-
   "docs.quickstart": "Quick Start",
   "docs.stages": "Training Stages",
   "docs.distributed": "Distributed Training",
@@ -341,5 +300,15 @@
   "docs.tr_gibberish_t": "Model outputs gibberish",
   "docs.tr_gibberish": "check tokenizer/chat template, ensure enough training steps",
   "docs.tr_slow_t": "Training is slow",
-  "docs.tr_slow": "enable flash attention + liger, increase batch size, check GPU utilization"
+  "docs.tr_slow": "enable flash attention + liger, increase batch size, check GPU utilization",
+  "status.starting": "Starting",
+  "status.training": "Training",
+  "status.building_model": "Building model",
+  "status.resumed": "Resumed",
+  "status.unknown": "Unknown",
+  "stage.vlm_pretrain": "VLM Pretrain",
+  "stage.vlm_sft": "VLM SFT",
+  "stage.vlm_grpo": "VLM GRPO",
+  "nav.worldModels": "World Models",
+  "nav.vla": "VLA Studio"
 }

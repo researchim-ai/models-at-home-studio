@@ -7,7 +7,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from backend.paths import get_project_root
+from backend.paths import get_project_root, safe_child, atomic_json
+from backend.services.blueprints import validate
 
 router = APIRouter()
 
@@ -21,16 +22,26 @@ class SaveBlueprintRequest(BaseModel):
     blueprint: dict
 
 
+@router.post('/validate')
+def validate_blueprint(blueprint: dict):
+    try:
+        return {'blueprint': validate(blueprint)}
+    except ValueError as exc:
+        raise HTTPException(400, f'Invalid blueprint: {exc}') from exc
+
+
 def _safe_name(name: str) -> str:
     """Prevent path traversal."""
-    name = name.replace("/", "_").replace("\\", "_").replace("..", "_")
+    name = name.strip()
+    if not name or name in ('.', '..') or '/' in name or '\\' in name:
+        raise HTTPException(400, 'Blueprint name must be a nonempty filename')
     if not name.endswith(".json"):
         name = f"{name}.json"
     return name
 
 
 @router.get("/list")
-async def list_blueprints():
+def list_blueprints():
     """List saved blueprints with summary info."""
     items = []
     if not BLUEPRINTS_DIR.exists():
@@ -54,10 +65,10 @@ async def list_blueprints():
 
 
 @router.get("/get/{name}")
-async def get_blueprint(name: str):
+def get_blueprint(name: str):
     """Load a saved blueprint by name."""
     safe = _safe_name(name)
-    path = BLUEPRINTS_DIR / safe
+    path = safe_child(BLUEPRINTS_DIR, safe)
     if not path.exists():
         raise HTTPException(404, f"Blueprint {name} not found")
 
@@ -69,37 +80,33 @@ async def get_blueprint(name: str):
 
 
 @router.post("/save")
-async def save_blueprint(req: SaveBlueprintRequest):
+def save_blueprint(req: SaveBlueprintRequest):
     """Save a blueprint to disk. Validates using homellm.models.blueprint.Blueprint if available."""
     safe = _safe_name(req.name)
-    path = BLUEPRINTS_DIR / safe
+    path = safe_child(BLUEPRINTS_DIR, safe)
 
     try:
-        from homellm.models.blueprint import Blueprint
-        try:
-            Blueprint.parse_obj(req.blueprint)
-        except Exception as e:
-            raise HTTPException(400, f"Invalid blueprint: {e}")
-    except ImportError:
-        pass
+        blueprint = validate(req.blueprint)
+    except ValueError as exc:
+        raise HTTPException(400, f'Invalid blueprint: {exc}') from exc
 
     try:
-        path.write_text(json.dumps(req.blueprint, indent=2, ensure_ascii=False))
+        atomic_json(path, blueprint)
         return {"success": True, "path": str(path)}
     except Exception as e:
         raise HTTPException(500, f"Failed to save: {e}")
 
 
 @router.delete("/delete/{name}")
-async def delete_blueprint(name: str):
+def delete_blueprint(name: str):
     safe = _safe_name(name)
-    path = BLUEPRINTS_DIR / safe
+    path = safe_child(BLUEPRINTS_DIR, safe)
     path.unlink(missing_ok=True)
     return {"success": True}
 
 
 @router.get("/blocks")
-async def list_blocks():
+def list_blocks():
     """List all available block types from the BLOCK_REGISTRY."""
     try:
         import sys

@@ -1,13 +1,7 @@
-let cachedPort: number | null = null
+import { consumeSSE } from './sse'
 
 async function resolvePort(): Promise<number> {
-  if (cachedPort != null) return cachedPort
-  if (window.electronAPI) {
-    cachedPort = await window.electronAPI.backend.port()
-    return cachedPort
-  }
-  cachedPort = 8000
-  return cachedPort
+  return window.electronAPI ? window.electronAPI.backend.port() : 8000
 }
 
 async function getBaseUrl(): Promise<string> {
@@ -18,8 +12,11 @@ async function getBaseUrl(): Promise<string> {
   return '/api'
 }
 
-// Eagerly resolve the base URL; exported helper awaits resolution.
-const basePromise = getBaseUrl()
+
+async function authHeaders(): Promise<Record<string, string>> {
+  const token = await window.electronAPI?.backend.token?.()
+  return token ? { 'X-Studio-Token': token } : {}
+}
 
 class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -29,21 +26,57 @@ class ApiError extends Error {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const BASE_URL = await basePromise
+  const BASE_URL = await getBaseUrl()
   const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
     ...options,
+    headers: { 'Content-Type': 'application/json', ...await authHeaders(), ...options?.headers },
   })
 
   if (!res.ok) {
-    const text = await res.text().catch(() => 'Unknown error')
-    throw new ApiError(res.status, text)
+    let message = await res.text().catch(() => 'Unknown error')
+    try {
+      const detail = JSON.parse(message).detail
+      message = typeof detail === 'string' ? detail : JSON.stringify(detail ?? message)
+    } catch { /* plain text error */ }
+    throw new ApiError(res.status, message)
   }
 
   return res.json()
 }
 
 export const api = {
+  // Vision-language-action policies
+  worldResources: (payload: Record<string, unknown>) => request<import('./types').WorldResourceReport>('/world-models/resources/estimate', { method: 'POST', body: JSON.stringify(payload) }),
+  benchmarkWorldResources: (payload: Record<string, unknown>) => request<import('./types').WorldResourceReport>('/world-models/resources/benchmark', { method: 'POST', body: JSON.stringify(payload) }),
+  startWorldPlay: (payload: Record<string, unknown>) => request<import('./types').LocalWorldFrame & { session_id: string }>('/world-models/play/start', { method: 'POST', body: JSON.stringify(payload) }),
+  stepWorldPlay: (payload: Record<string, unknown>) => request<import('./types').LocalWorldFrame>('/world-models/play/step', { method: 'POST', body: JSON.stringify(payload) }),
+  resetWorldPlay: (payload: Record<string, unknown>) => request<import('./types').LocalWorldFrame>('/world-models/play/reset', { method: 'POST', body: JSON.stringify(payload) }),
+  stopWorldPlay: (id: string) => request<{ success: boolean }>('/world-models/play/stop', { method: 'POST', body: JSON.stringify({ session_id: id }) }),
+  worldFoundationModels: () => request<{ models: import('./types').WorldFoundationModel[]; domains: Record<string, number>; checked_at: string }>('/world-models/foundation/models'),
+  worldFoundationJobs: () => request<{ runs: import('./types').TrainingRun[] }>('/world-models/foundation/jobs'),
+  preflightFoundation: (config: Record<string, unknown>) => request<{ ready: boolean; checks: { name: string; status: string; detail: string }[] }>('/world-models/foundation/preflight', { method: 'POST', body: JSON.stringify(config) }),
+  generateFoundation: (config: Record<string, unknown>) => request<{ run_id: string }>('/world-models/foundation/generate', { method: 'POST', body: JSON.stringify(config) }),
+  downloadFoundation: (config: Record<string, unknown>) => request<{ run_id: string }>('/world-models/foundation/download', { method: 'POST', body: JSON.stringify(config) }),
+  stopFoundation: (id: string) => request<{ success: boolean }>(`/world-models/foundation/stop/${encodeURIComponent(id)}`, { method: 'POST' }),
+  foundationResult: (id: string) => request<import('./types').WorldFoundationResult>(`/world-models/foundation/jobs/${encodeURIComponent(id)}/result`),
+  foundationVideo: async (id: string) => {
+    const response = await fetch(`${await getBaseUrl()}/world-models/foundation/jobs/${encodeURIComponent(id)}/video`, { headers: await authHeaders() });
+    if (!response.ok) throw new Error('Не удалось загрузить видео');
+    return response.blob();
+  },
+  worldExamples: () => request<{ dataset_path: string; val_data_path: string }>('/world-models/examples'),
+  worldRuns: () => request<{ runs: import('./types').TrainingRun[] }>('/world-models/runs'),
+  preflightWorld: (config: Record<string, unknown>) => request<{ ready: boolean; checks: { name: string; status: string; detail: string }[] }>('/world-models/preflight', { method: 'POST', body: JSON.stringify(config) }),
+  startWorld: (config: Record<string, unknown>) => request<{ run_id: string }>('/world-models/start', { method: 'POST', body: JSON.stringify(config) }),
+  stopWorld: (id: string) => request<{ success: boolean }>(`/world-models/stop/${encodeURIComponent(id)}`, { method: 'POST' }),
+  rolloutWorld: (payload: Record<string, unknown>) => request<{ frames: string[]; states: number[][] | null; rewards: number[] | null; done_probabilities: number[] | null; warning: string }>('/world-models/rollout', { method: 'POST', body: JSON.stringify(payload) }),
+  vlaExamples: () => request<{ examples: { domain: string; dataset_path: string; val_data_path: string; synthetic: boolean }[] }>('/vla/examples'),
+  vlaRuns: () => request<{ runs: import('./types').TrainingRun[] }>('/vla/runs'),
+  preflightVLA: (config: Record<string, unknown>) => request<import('./types').VLAPreflightReport>('/vla/preflight', { method: 'POST', body: JSON.stringify(config) }),
+  startVLA: (config: Record<string, unknown>) => request<{ run_id: string }>('/vla/start', { method: 'POST', body: JSON.stringify(config) }),
+  stopVLA: (id: string) => request<{ success: boolean }>(`/vla/stop/${encodeURIComponent(id)}`, { method: 'POST' }),
+  predictVLA: (payload: Record<string, unknown>) => request<import('./types').VLAPrediction>('/vla/predict', { method: 'POST', body: JSON.stringify(payload) }),
+
   // System
   health: () => request<{ status: string }>('/system/health'),
   gpuInfo: () => request<{ gpus: import('./types').GpuStats[] }>('/system/gpu'),
@@ -60,6 +93,8 @@ export const api = {
     request<{ success: boolean }>(`/training/stop/${runId}`, { method: 'POST' }),
 
   listRuns: () => request<{ runs: import('./types').TrainingRun[] }>('/training/runs'),
+
+  runMetrics: (runId: string) => request<{ metrics: import('./types').MetricsSnapshot | null; history: import('./types').MetricsSnapshot[] }>(`/training/runs/${encodeURIComponent(runId)}/metrics`),
 
   getRun: (runId: string) => request<import('./types').TrainingRun>(`/training/runs/${runId}`),
 
@@ -135,6 +170,9 @@ export const api = {
     request<{ run_id: string; stopped: boolean; reason?: string }>(`/agent/runs/${encodeURIComponent(runId)}/stop`, { method: 'POST' }),
 
   // VLM
+  preflightVLM: (config: Record<string, unknown>) => request<import('./types').VLMPreflightReport>('/vlm/preflight', {
+    method: 'POST', body: JSON.stringify(config),
+  }),
   startVLMTraining: (config: Record<string, unknown>) =>
     request<{ run_id: string }>('/vlm/start', {
       method: 'POST',
@@ -143,6 +181,7 @@ export const api = {
   stopVLMTraining: (runId: string) =>
     request<{ success: boolean }>(`/vlm/stop/${runId}`, { method: 'POST' }),
   listVLMRuns: () => request<{ runs: import('./types').TrainingRun[] }>('/vlm/runs'),
+  vlmStatus: () => request<{ loaded: boolean; model_path: string | null }>('/vlm/status'),
   loadVLM: (modelPath: string) =>
     request<{ success: boolean }>('/vlm/load', {
       method: 'POST',
@@ -162,6 +201,10 @@ export const api = {
     request<{ content: string }>(`/study/document?path=${encodeURIComponent(p)}`),
 
   // Blueprints
+  validateBlueprint: (blueprint: Record<string, unknown>) =>
+    request<{ blueprint: Record<string, unknown> }>('/blueprints/validate', {
+      method: 'POST', body: JSON.stringify(blueprint),
+    }),
   listBlueprints: () =>
     request<{ blueprints: Array<{ name: string; path: string; hidden_size: number; vocab_size: number; num_blocks: number; modified_at: string }> }>('/blueprints/list'),
   getBlueprint: (name: string) =>
@@ -207,11 +250,12 @@ export function createMetricsWebSocket(
   onMessage: (data: import('./types').MetricsSnapshot) => void,
   onError?: (err: Event) => void,
 ): Promise<WebSocket> {
-  return resolvePort().then((port) => {
+  return resolvePort().then(async (port) => {
     const wsUrl = window.electronAPI
       ? `ws://127.0.0.1:${port}/ws/metrics/${runId}`
       : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/metrics/${runId}`
-    const ws = new WebSocket(wsUrl)
+    const token = await window.electronAPI?.backend.token?.()
+    const ws = token ? new WebSocket(wsUrl, [`mah.${token}`]) : new WebSocket(wsUrl)
 
     ws.onmessage = (event) => {
       try {
@@ -225,51 +269,42 @@ export function createMetricsWebSocket(
   })
 }
 
+function startStream(
+  path: string,
+  body: unknown,
+  onEvent: (event: Record<string, unknown>) => void,
+  onDone: () => void,
+  onError?: (err: Error) => void,
+): AbortController {
+  const controller = new AbortController()
+  void (async () => {
+    try {
+      const base = await getBaseUrl()
+      const response = await fetch(`${base}${path}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...await authHeaders() },
+        body: JSON.stringify(body), signal: controller.signal,
+      })
+      if (!response.ok) throw new Error(await response.text())
+      await consumeSSE(response, onEvent, controller.signal)
+    } catch (err) {
+      if (!controller.signal.aborted) onError?.(err instanceof Error ? err : new Error(String(err)))
+    } finally {
+      onDone()
+    }
+  })()
+  return controller
+}
+
 export function createChatStream(
   request: import('./types').ChatRequest,
   onChunk: (text: string) => void,
   onDone: () => void,
   onError?: (err: Error) => void,
 ): AbortController {
-  const controller = new AbortController()
-
-  basePromise.then((BASE_URL) => fetch(`${BASE_URL}/chat/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request),
-    signal: controller.signal,
-  }))
-    .then(async (res) => {
-      if (!res.ok) throw new Error(await res.text())
-      const reader = res.body?.getReader()
-      if (!reader) throw new Error('No reader')
-
-      const decoder = new TextDecoder()
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        const text = decoder.decode(value, { stream: true })
-        for (const line of text.split('\n')) {
-          if (line.startsWith('data: ')) {
-            const payload = line.slice(6)
-            if (payload === '[DONE]') {
-              onDone()
-              return
-            }
-            try {
-              const parsed = JSON.parse(payload)
-              if (parsed.text) onChunk(parsed.text)
-            } catch { /* skip */ }
-          }
-        }
-      }
-      onDone()
-    })
-    .catch((err) => {
-      if (err.name !== 'AbortError') onError?.(err)
-    })
-
-  return controller
+  return startStream('/chat/generate', request, (event) => {
+    if (typeof event.error === 'string') throw new Error(event.error)
+    if (typeof event.text === 'string') onChunk(event.text)
+  }, onDone, onError)
 }
 
 export function createAgentChatStream(
@@ -280,47 +315,9 @@ export function createAgentChatStream(
   onDone: () => void,
   onError?: (err: Error) => void,
 ): AbortController {
-  const controller = new AbortController()
-
-  basePromise.then((BASE_URL) => fetch(`${BASE_URL}/agent/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id: sessionId, message }),
-    signal: controller.signal,
-  }))
-    .then(async (res) => {
-      if (!res.ok) throw new Error(await res.text())
-      const reader = res.body?.getReader()
-      if (!reader) throw new Error('No reader')
-
-      const decoder = new TextDecoder()
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        const text = decoder.decode(value, { stream: true })
-        for (const line of text.split('\n')) {
-          if (line.startsWith('data: ')) {
-            const payload = line.slice(6)
-            if (payload === '[DONE]') {
-              onDone()
-              return
-            }
-            let parsed: { type?: string; content?: string; tool?: string; args?: Record<string, unknown> } | null = null
-            try {
-              parsed = JSON.parse(payload)
-            } catch { /* skip */ }
-            if (parsed?.type === 'text') onChunk(parsed.content ?? '')
-            if (parsed?.type === 'tool_call') onToolCall(parsed.tool ?? '', parsed.args ?? {})
-            if (parsed?.type === 'error') throw new Error(parsed.content ?? 'Agent error')
-          }
-        }
-      }
-      onDone()
-    })
-    .catch((err) => {
-      if (err.name !== 'AbortError') onError?.(err)
-      onDone()
-    })
-
-  return controller
+  return startStream('/agent/chat', {session_id: sessionId, message}, (event) => {
+    if (event.type === 'error') throw new Error(String(event.content ?? 'Agent error'))
+    if (event.type === 'text') onChunk(String(event.content ?? ''))
+    if (event.type === 'tool_call') onToolCall(String(event.tool ?? ''), (event.args ?? {}) as Record<string, unknown>)
+  }, onDone, onError)
 }

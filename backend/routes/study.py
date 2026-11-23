@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
-from backend.paths import get_project_root
+from backend.paths import get_project_root, safe_child
 
 router = APIRouter()
 
@@ -13,11 +13,13 @@ STUDY_DIR = PROJECT_ROOT / "study_materials"
 
 
 @router.get("/index")
-async def document_index(lang: str = Query("en")):
+def document_index(lang: str = Query("en")):
     """List available study documents."""
     documents = []
 
-    lang_dir = STUDY_DIR / lang
+    if lang not in ("en", "ru"):
+        raise HTTPException(400, "Unsupported language")
+    lang_dir = safe_child(STUDY_DIR, lang)
     if not lang_dir.exists():
         lang_dir = STUDY_DIR / "en"
 
@@ -34,15 +36,14 @@ async def document_index(lang: str = Query("en")):
 
 
 @router.get("/document")
-async def get_document(path: str = Query(...)):
+def get_document(path: str = Query(...)):
     """Get content of a specific document."""
-    full_path = STUDY_DIR / path
+    full_path = safe_child(STUDY_DIR, path)
+    if full_path.suffix != ".md":
+        raise HTTPException(400, "Expected a Markdown document")
 
-    if not full_path.exists():
+    if not full_path.is_file():
         raise HTTPException(404, "Document not found")
-
-    if not str(full_path.resolve()).startswith(str(STUDY_DIR.resolve())):
-        raise HTTPException(403, "Access denied")
 
     content = full_path.read_text(encoding="utf-8")
     return {"content": content}

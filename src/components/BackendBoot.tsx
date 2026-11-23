@@ -5,6 +5,7 @@ import {
   Heart, PlayCircle, Cog, Cpu,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useQueryClient } from '@tanstack/react-query'
 import type { BootPhase } from '@/types/electron'
 
 interface BackendBootProps {
@@ -45,10 +46,15 @@ function isFailure(phase: BootPhase): boolean {
 }
 
 export function BackendBoot({ children }: BackendBootProps) {
+  const queryClient = useQueryClient()
   const { backendOnline, backendError, backendPort, bootPhase, checkBackend, restartBackend, subscribeToBootPhase, setBackendMode, config, loadConfig } = useDockerStore()
   const [attempts, setAttempts] = useState(0)
   const [buildLog, setBuildLog] = useState<string[]>([])
   const [timeout20, setTimeout20] = useState(false)
+
+  useEffect(() => {
+    if (backendOnline) void queryClient.invalidateQueries()
+  }, [backendOnline, backendPort, queryClient])
 
   useEffect(() => {
     loadConfig()
@@ -81,7 +87,8 @@ export function BackendBoot({ children }: BackendBootProps) {
   }, [bootPhase])
 
   const { title, detail, icon } = useMemo(() => phaseLabel(bootPhase), [bootPhase])
-  const failed = isFailure(bootPhase) || (timeout20 && !backendOnline)
+  const failed = isFailure(bootPhase)
+  const takingLong = timeout20 && !failed
 
   if (backendOnline) return <>{children}</>
 
@@ -126,6 +133,7 @@ export function BackendBoot({ children }: BackendBootProps) {
           </div>
         )}
 
+        {takingLong && <p className="text-xs text-muted-foreground">Запуск занимает больше времени. Дождись завершения текущего этапа.</p>}
         {failed && (
           <>
             <div className="flex gap-2 flex-wrap justify-center">

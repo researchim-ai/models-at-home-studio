@@ -7,21 +7,51 @@ import os
 import signal
 import subprocess
 import time
+import sys
+import secrets
+import threading
+import json
+from urllib.parse import urlsplit
 from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 from backend.paths import get_project_root
+from backend.services import processes
 
 router = APIRouter()
 
 PROJECT_ROOT = get_project_root(Path(__file__).parent.parent.parent / "models-at-home")
 NOTEBOOKS_DIR = PROJECT_ROOT / "notebooks"
-JUPYTER_PID = PROJECT_ROOT / ".runs" / "jupyter.pid"
-JUPYTER_LOG = PROJECT_ROOT / ".runs" / "jupyter.log"
-JUPYTER_TOKEN = os.environ.get("JUPYTER_TOKEN", "mah-local")
+JUPYTER_RUN = PROJECT_ROOT / ".runs" / "jupyter"
+JUPYTER_PID = JUPYTER_RUN / "pid"
+JUPYTER_LOG = JUPYTER_RUN / "stdout.log"
+JUPYTER_TOKEN = os.environ.get("JUPYTER_TOKEN") or ""
 JUPYTER_PORT = int(os.environ.get("JUPYTER_PORT", "8888"))
 JUPYTER_PUBLIC_URL = os.environ.get("JUPYTER_PUBLIC_URL", f"http://127.0.0.1:{JUPYTER_PORT}")
+_start_lock = threading.Lock()
+
+
+def _connection_token() -> str:
+    global JUPYTER_TOKEN
+    connection = JUPYTER_RUN / 'connection.json'
+    saved = None
+    try:
+        value = json.loads(connection.read_text()).get('token')
+        if isinstance(value, str) and value:
+            saved = value
+    except (OSError, ValueError, AttributeError):
+        pass
+    desired = JUPYTER_TOKEN or saved or secrets.token_urlsafe(32)
+    if _pid_running():
+        if not processes.is_owned(JUPYTER_RUN):
+            raise HTTPException(409, 'Jupyter process ownership cannot be verified')
+        if saved != desired:
+            processes.stop(JUPYTER_RUN)
+    from backend.paths import atomic_json
+    JUPYTER_TOKEN = desired
+    atomic_json(connection, {'token': desired})
+    return JUPYTER_TOKEN
 
 # Curated templates that ship with the project
 TEMPLATES = [
@@ -89,7 +119,7 @@ TEMPLATES = [
 
 
 @router.get("/list")
-async def list_notebooks():
+def list_notebooks():
     """List .ipynb files in the notebooks directory."""
     items = []
     if not NOTEBOOKS_DIR.exists():
@@ -111,7 +141,7 @@ async def list_notebooks():
 
 
 @router.get("/templates")
-async def notebook_templates():
+def notebook_templates():
     """Expose curated templates. Only returns those that exist on disk."""
     available = []
     for tmpl in TEMPLATES:
@@ -121,7 +151,7 @@ async def notebook_templates():
 
 
 @router.get("/jupyter-status")
-async def jupyter_status(url: str = Query(...)):
+def jupyter_status(url: str = Query(...)):
     """Check if JupyterLab is running by hitting /api/status."""
     try:
         endpoint = f"{_probe_url(url).rstrip('/')}/api/status"
@@ -135,10 +165,16 @@ async def jupyter_status(url: str = Query(...)):
 
 
 @router.post("/jupyter-start")
-async def jupyter_start():
+def jupyter_start():
     """Start a managed JupyterLab process rooted at models-at-home/notebooks."""
+    with _start_lock:
+        return _start_jupyter()
+
+
+def _start_jupyter():
     NOTEBOOKS_DIR.mkdir(parents=True, exist_ok=True)
     JUPYTER_PID.parent.mkdir(parents=True, exist_ok=True)
+    _connection_token()
 
     if _pid_running():
         return {
@@ -149,37 +185,30 @@ async def jupyter_start():
         }
 
     cmd = [
-        "python",
+        sys.executable,
         "-m",
         "jupyterlab",
         "--no-browser",
-        "--ip=0.0.0.0",
+        f"--ip={os.environ.get('JUPYTER_BIND_HOST', '127.0.0.1')}",
         f"--port={JUPYTER_PORT}",
-        f"--ServerApp.token={JUPYTER_TOKEN}",
+        f"--IdentityProvider.token={JUPYTER_TOKEN}",
+        "--ServerApp.port_retries=0",
         f"--ServerApp.root_dir={NOTEBOOKS_DIR}",
-        "--ServerApp.allow_origin=*",
         "--ServerApp.allow_remote_access=True",
         "--allow-root",
     ]
 
     try:
-        log = open(JUPYTER_LOG, "a", encoding="utf-8")
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(PROJECT_ROOT),
-            stdout=log,
-            stderr=log,
-            start_new_session=True,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
-        )
-        JUPYTER_PID.write_text(str(proc.pid))
+        proc = processes.launch(JUPYTER_RUN, cmd, cwd=PROJECT_ROOT,
+                                env={**os.environ, "PYTHONUNBUFFERED": "1"})
     except Exception as exc:
         raise HTTPException(500, f"Failed to start JupyterLab: {exc}")
 
-    if not _wait_for_jupyter_ready("http://127.0.0.1:8888", timeout=30):
+    if not _wait_for_jupyter_ready(f"http://127.0.0.1:{JUPYTER_PORT}", timeout=30, proc=proc):
         tail = ""
         if JUPYTER_LOG.exists():
             tail = "\n".join(JUPYTER_LOG.read_text(errors="ignore").splitlines()[-20:])
+        processes.stop(JUPYTER_RUN)
         raise HTTPException(500, f"JupyterLab did not become ready. Log tail:\n{tail}")
 
     return {
@@ -191,45 +220,30 @@ async def jupyter_start():
 
 
 @router.post("/jupyter-stop")
-async def jupyter_stop():
+def jupyter_stop():
     """Stop the managed JupyterLab process if it was started by the backend."""
-    if JUPYTER_PID.exists():
-        try:
-            pid = int(JUPYTER_PID.read_text().strip())
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        except Exception as exc:
-            raise HTTPException(500, f"Failed to stop JupyterLab: {exc}")
-        finally:
-            JUPYTER_PID.unlink(missing_ok=True)
+    processes.stop(JUPYTER_RUN)
     return {"success": True}
 
 
 def _pid_running() -> bool:
-    if not JUPYTER_PID.exists():
-        return False
-    try:
-        pid = int(JUPYTER_PID.read_text().strip())
-        os.kill(pid, 0)
-        return True
-    except Exception:
-        JUPYTER_PID.unlink(missing_ok=True)
-        return False
+    return processes.is_running(JUPYTER_RUN)
 
 
-def _wait_for_jupyter_ready(url: str, timeout: int = 30) -> bool:
+def _wait_for_jupyter_ready(url: str, timeout: int = 30, proc=None) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
+        if proc is not None and proc.poll() is not None:
+            return False
         try:
             endpoint = f"{url.rstrip('/')}/api/status"
-            req = urllib.request.Request(endpoint, headers={"User-Agent": "mah-studio"})
+            req = urllib.request.Request(endpoint, headers={"User-Agent": "mah-studio", "Authorization": f"token {JUPYTER_TOKEN}"})
             with urllib.request.urlopen(req, timeout=2) as resp:
                 if resp.status == 200:
                     return True
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
-                return True
+                return False
         except Exception:
             pass
         time.sleep(1)
@@ -239,5 +253,8 @@ def _wait_for_jupyter_ready(url: str, timeout: int = 30) -> bool:
 def _probe_url(url: str) -> str:
     """Use the container-internal URL when checking the managed Jupyter server."""
     if url.rstrip("/") == JUPYTER_PUBLIC_URL.rstrip("/"):
-        return "http://127.0.0.1:8888"
+        return f"http://127.0.0.1:{JUPYTER_PORT}"
+    parsed = urlsplit(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+        raise HTTPException(400, "Expected an HTTP(S) Jupyter URL")
     return url

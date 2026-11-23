@@ -18,6 +18,8 @@ import { useDockerStore } from '@/stores/dockerStore'
 const navItems = [
   { path: '/', icon: GraduationCap, labelKey: 'nav.training' },
   { path: '/vlm', icon: Eye, labelKey: 'nav.vlm' },
+  { path: '/vla', icon: Bot, labelKey: 'nav.vla' },
+  { path: '/world-models', icon: Activity, labelKey: 'nav.worldModels' },
   { path: '/builder', icon: Blocks, labelKey: 'nav.builder' },
   { path: '/study', icon: BookOpen, labelKey: 'nav.study' },
   { path: '/notebooks', icon: FlaskConical, labelKey: 'nav.notebooks' },

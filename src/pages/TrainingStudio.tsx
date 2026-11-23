@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card'
@@ -124,6 +124,7 @@ function ConfigSidebar() {
           { value: 'home', label: 'HomeModel (LLaMA-style)' },
           { value: 'gpt2', label: 'GPT-2 (Classic)' },
           { value: 'home_moe', label: 'HomeModel MoE' },
+          { value: 'blueprint', label: 'Model Builder blueprint' },
           { value: 'hf', label: 'HuggingFace arch (from scratch)' },
         ]
       : [
@@ -134,7 +135,7 @@ function ConfigSidebar() {
   const tuningMethod = config.tuning_method ?? 'full'
   const isLora = tuningMethod === 'lora' || tuningMethod === 'qlora'
   const trainingMode = config.training_mode ?? (stage === 'sft' ? 'epochs' : 'steps')
-  const isPretrainArch = stage === 'pretrain' && (config.model_type ?? 'home') !== 'hf'
+  const isPretrainArch = stage === 'pretrain' && !['hf', 'blueprint'].includes(config.model_type ?? 'home')
   const toggleModule = (m: string) => {
     const cur = config.lora_target_modules ?? []
     updateConfig({
@@ -201,6 +202,17 @@ function ConfigSidebar() {
             </p>
           )}
         </div>
+
+        {stage === 'pretrain' && config.model_type === 'blueprint' && (
+          <div className="space-y-2">
+            <Label className="text-xs">Blueprint</Label>
+            <Input value={config.model_blueprint ?? ''} placeholder="blueprints/my_model.json"
+              onChange={event => updateConfig({ model_blueprint: event.target.value, model_blueprint_spec: null })} />
+            <Label className="text-xs">Tokenizer</Label>
+            <Input value={config.model_id ?? ''} placeholder="gpt2 or local tokenizer path"
+              onChange={event => updateConfig({ model_id: event.target.value })} />
+          </div>
+        )}
 
         {/* Architecture params (pretrain from scratch) */}
         {isPretrainArch && (
@@ -566,7 +578,7 @@ function ConfigSidebar() {
               label="Group size (G)"
               value={config.grpo_group_size ?? 8}
               onValueChange={(v) => updateConfig({ grpo_group_size: v })}
-              min={2} max={32} step={1}
+              min={config.training_backend === 'unsloth' ? 2 : 8} max={32} step={1}
             />
             <Slider
               label="Prompt batch size"
@@ -775,8 +787,17 @@ function MemoryEstimatorCard() {
   const [result, setResult] = useState<Record<string, any> | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const requestVersion = useRef(0)
+  useEffect(() => {
+    requestVersion.current++
+    setResult(null)
+    setError(null)
+    setLoading(false)
+    return () => { requestVersion.current++ }
+  }, [config])
 
   const handleEstimate = async () => {
+    const version = ++requestVersion.current
     setLoading(true)
     setError(null)
     try {
@@ -786,12 +807,13 @@ function MemoryEstimatorCard() {
         (config.parallel_mode as string) ?? 'default',
         Math.max(1, (config.gpu_ids as number[] | undefined)?.length ?? 1),
       )
+      if (version !== requestVersion.current) return
       setResult(r)
       if ('error' in r) setError(r.error as string)
     } catch (e: unknown) {
-      setError(String(e))
+      if (version === requestVersion.current) setError(String(e))
     } finally {
-      setLoading(false)
+      if (version === requestVersion.current) setLoading(false)
     }
   }
 
@@ -806,14 +828,17 @@ function MemoryEstimatorCard() {
             <Gauge className="h-4 w-4" />
             VRAM Memory Estimator
           </CardTitle>
-          <CardDescription>Точный расчёт для выбранной конфигурации</CardDescription>
+          <CardDescription>Приблизительная оценка для выбранной конфигурации</CardDescription>
         </div>
-        <Button size="sm" variant="outline" onClick={handleEstimate} disabled={loading}>
+        <Button size="sm" variant="outline" onClick={handleEstimate} disabled={loading || config.model_type === 'blueprint'}>
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
           Estimate
         </Button>
       </CardHeader>
       <CardContent>
+        {config.model_type === 'blueprint' && (
+          <p className="text-xs text-muted-foreground">Оценка VRAM для произвольного графа пока недоступна.</p>
+        )}
         {error && <div className="text-xs text-destructive mb-2">{error}</div>}
         {!result && !loading && (
           <p className="text-xs text-muted-foreground">Нажми Estimate чтобы посчитать</p>
@@ -906,7 +931,14 @@ function ModelPreviewCard() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {fromScratch ? (
+        {isPretrain && config.model_type === 'blueprint' ? (
+          <div className="rounded-lg bg-muted/50 p-3 text-sm space-y-1">
+            <div className="font-mono break-all">{config.model_blueprint || 'Model Builder'}</div>
+            {Array.isArray(config.model_blueprint_spec?.blocks) && (
+              <div className="text-muted-foreground">{config.model_blueprint_spec.blocks.length} blocks · h={config.model_blueprint_spec.hidden_size as number}</div>
+            )}
+          </div>
+        ) : fromScratch ? (
           <div className="grid grid-cols-4 gap-3 text-sm">
             <div className="rounded-lg bg-muted/50 p-3">
               <div className="text-xs text-muted-foreground">{t('arch.hidden_size')}</div>
@@ -970,11 +1002,14 @@ function LaunchTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
   const { config, activeRunId, setActiveRunId } = useTrainingStore()
   const startMutation = useStartTraining()
   const stopMutation = useStopTraining()
+  const { data: selectedRun } = useTrainingRun(activeRunId)
 
   const stage = config.stage ?? 'pretrain'
   const fromScratch = stage === 'pretrain' && (config.model_type ?? 'home') !== 'hf'
 
-  const modelReady = fromScratch || !!(config.base_model_path || config.model_path)
+  const modelReady = config.model_type === 'blueprint' && stage === 'pretrain'
+    ? !!(config.model_blueprint || config.model_blueprint_spec)
+    : fromScratch || !!(config.base_model_path || config.model_path)
   const dataPath = stage === 'grpo' ? (config.grpo_dataset_path || config.dataset_path) : config.dataset_path
   const dataReady = !!dataPath
   const modeReady = !!config.parallel_mode
@@ -992,7 +1027,7 @@ function LaunchTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
       toast.success(t('status.running'))
       onNavigate('monitoring')
     } catch (err) {
-      toast.error(t('error.generic'))
+      toast.error(err instanceof Error ? err.message : t('error.generic'))
     }
   }
 
@@ -1007,7 +1042,7 @@ function LaunchTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
     }
   }
 
-  const isRunning = !!activeRunId
+  const isRunning = !!activeRunId && (selectedRun?.process_running ?? !['completed', 'error', 'stopped', 'unknown'].includes(selectedRun?.status ?? 'initializing'))
 
   return (
     <div className="space-y-6">
@@ -1205,26 +1240,29 @@ function RunLogsCard({ runId }: { runId: string }) {
 
 function MonitoringTab() {
   const { t } = useTranslation()
-  const { activeRunId, metricsHistory, currentMetrics, pushMetrics, clearMetrics } = useTrainingStore()
+  const { activeRunId, metricsHistory, currentMetrics, pushMetrics, hydrateMetrics } = useTrainingStore()
   const { data: runData } = useTrainingRun(activeRunId)
 
   useEffect(() => {
     if (!activeRunId) return
 
-    clearMetrics()
     let websocket: WebSocket | null = null
     let cancelled = false
-
-    createMetricsWebSocket(activeRunId, pushMetrics).then((ws) => {
-      if (cancelled) {
-        ws.close()
-        return
-      }
-      websocket = ws
-    })
-
+    let reconnect: ReturnType<typeof setTimeout>
+    const connect = () => {
+      api.runMetrics(activeRunId).then(result => {
+        if (!cancelled) hydrateMetrics(activeRunId, result.history ?? [], result.metrics ?? null)
+      }).catch(() => { /* Live WebSocket can still provide the current snapshot. */ })
+      createMetricsWebSocket(activeRunId, pushMetrics).then((ws) => {
+        if (cancelled) { ws.close(); return }
+        websocket = ws
+        ws.onclose = () => { if (!cancelled) reconnect = setTimeout(connect, 2000) }
+      }).catch(() => { if (!cancelled) reconnect = setTimeout(connect, 2000) })
+    }
+    connect()
     return () => {
       cancelled = true
+      clearTimeout(reconnect)
       websocket?.close()
     }
   }, [activeRunId])
@@ -1239,7 +1277,7 @@ function MonitoringTab() {
     kl: m.kl_divergence,
   }))
 
-  const isGrpo = (runData?.stage ?? '') === 'grpo'
+  const isGrpo = (runData?.stage ?? '').endsWith('grpo')
   const totalSteps = runData?.total_steps ?? 0
   const step = currentMetrics?.step ?? 0
   const progress = totalSteps > 0 ? Math.min(100, (step / totalSteps) * 100) : 0
@@ -1247,10 +1285,11 @@ function MonitoringTab() {
   // ETA estimate from the last N metric timestamps
   let eta = ''
   if (metricsHistory.length >= 2 && totalSteps > step) {
-    const first = metricsHistory[0]
-    const last = metricsHistory[metricsHistory.length - 1]
-    const dSteps = last.step - first.step
-    const dTime = last.timestamp - first.timestamp
+    const timed = metricsHistory.filter(point => point.timestamp > 0)
+    const first = timed[0]
+    const last = timed[timed.length - 1]
+    const dSteps = first && last ? last.step - first.step : 0
+    const dTime = first && last ? last.timestamp - first.timestamp : 0
     if (dSteps > 0 && dTime > 0) {
       const perStep = dTime / dSteps
       const remaining = (totalSteps - last.step) * perStep
@@ -1304,7 +1343,7 @@ function MonitoringTab() {
               <div className="mt-1 text-2xl font-bold font-mono">
                 {isGrpo
                   ? (currentMetrics.reward?.toFixed(3) ?? '—')
-                  : currentMetrics.loss.toFixed(4)}
+                  : (currentMetrics.loss?.toFixed(4) ?? '—')}
               </div>
             </CardContent>
           </Card>
@@ -1317,7 +1356,7 @@ function MonitoringTab() {
               <div className="mt-1 text-2xl font-bold font-mono">
                 {isGrpo
                   ? (currentMetrics.kl_divergence?.toFixed(4) ?? '—')
-                  : currentMetrics.learning_rate.toExponential(2)}
+                  : (currentMetrics.learning_rate?.toExponential(2) ?? '—')}
               </div>
             </CardContent>
           </Card>
@@ -1465,6 +1504,8 @@ const SYSTEM_PROMPT_PRESETS: Record<string, string> = {
 function ChatTab() {
   const { t } = useTranslation()
   const { selectedChatModel } = useTrainingStore()
+  const streamRef = useRef<AbortController | null>(null)
+  useEffect(() => () => streamRef.current?.abort(), [])
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([])
   const [input, setInput] = useState('')
   const [modelPath, setModelPath] = useState('')
@@ -1497,7 +1538,7 @@ function ChatTab() {
   }, [selectedChatModel])
 
   const handleSend = async () => {
-    if (!input.trim() || !modelPath) return
+    if (!input.trim() || !modelPath || isGenerating) return
     const userMsg = { role: 'user', content: input }
     const history = [...messages, userMsg]
     setMessages((prev) => [...prev, userMsg])
@@ -1512,7 +1553,7 @@ function ChatTab() {
       : history
 
     const { createChatStream } = await import('@/api/client')
-    createChatStream(
+    streamRef.current = createChatStream(
       {
         messages: outgoing as any,
         model_path: modelPath,
@@ -1532,7 +1573,7 @@ function ChatTab() {
         })
       },
       () => setIsGenerating(false),
-      () => setIsGenerating(false),
+      (err) => { setIsGenerating(false); toast.error(err.message) },
     )
   }
 
@@ -1648,14 +1689,15 @@ function HistoryRunCard({ run, onNavigate }: { run: TrainingRun; onNavigate: (ta
   }
 
   const checkpoints = run.checkpoints ?? []
-  const finalModelPath = (run.config?.output_dir ?? 'out') + '/' + (run.experiment_name || run.run_id) + '/final_model'
-  const canResume = checkpoints.length > 0 && run.status !== 'running'
+  const finalModelPath = run.final_model_path
+  const canResume = !run.process_running && checkpoints.length > 0 && !['completed', 'running', 'training', 'starting', 'initializing', 'building_model', 'resumed'].includes(run.status) && run.stage !== 'grpo'
 
   const handleMonitor = () => {
     setActiveRunId(run.run_id)
     onNavigate('monitoring')
   }
   const handleChat = () => {
+    if (!finalModelPath) return
     setSelectedChatModel(finalModelPath)
     onNavigate('chat')
     toast.success(t('history.chat_selected'))
@@ -1720,7 +1762,7 @@ function HistoryRunCard({ run, onNavigate }: { run: TrainingRun; onNavigate: (ta
                 <Eye className="h-3.5 w-3.5" />
                 {t('metrics.title')}
               </Button>
-              <Button variant="outline" size="sm" onClick={handleChat} disabled={run.status === 'running'}>
+              <Button variant="outline" size="sm" onClick={handleChat} disabled={!finalModelPath || run.status === 'running'}>
                 <MessageSquare className="h-3.5 w-3.5" />
                 {t('tabs.chat')}
               </Button>

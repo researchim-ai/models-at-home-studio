@@ -1,14 +1,30 @@
 export type TrainingStage = 'pretrain' | 'continual_pretrain' | 'sft' | 'grpo'
 export type VLMStage = 'vlm_pretrain' | 'vlm_sft' | 'vlm_grpo'
-export type RunStatus = 'running' | 'completed' | 'error' | 'stopped' | 'initializing'
+export type RunStatus = 'running' | 'completed' | 'error' | 'stopped' | 'initializing' | 'building_model' | 'resumed' | 'unknown' | 'starting' | 'training'
 
 export type OptimizerName = 'adamw' | 'adamw_8bit' | 'muon' | 'magma_adamw'
 export type TuningMethod = 'full' | 'lora' | 'qlora'
+
+export interface VLMPreflightReport {
+  ready: boolean
+  checks: Array<{ name: string; status: 'pass' | 'warning' | 'error'; detail: string }>
+  datasets: Array<{ kind: string; scanned_rows: number; valid_rows: number; images_checked: number; complete: boolean }>
+  sample: null | {
+    line: number
+    images: Array<{ reference: string; src: string; width: number; height: number }>
+    expanded_tokens: number
+    supervised_tokens: number
+    omitted_tokens: number
+    tokens: Array<{ index: number; id: number; text: string; trainable: boolean }>
+  }
+}
 export type TrainingMode = 'epochs' | 'steps'
 
 export interface TrainingConfig {
   stage: TrainingStage
   model_type: string
+  model_blueprint?: string
+  model_blueprint_spec?: Record<string, unknown> | null
   model_path: string
   model_id?: string
   model_name_input?: string
@@ -111,29 +127,41 @@ export interface TrainingConfig {
 
 export interface TrainingRun {
   run_id: string
-  stage: TrainingStage
+  stage: TrainingStage | VLMStage | 'vla_sft' | 'world_model' | 'world_foundation'
+  final_model_path?: string | null
+  process_running?: boolean
   status: RunStatus
   started_at: string
   finished_at?: string
   model_type: string
   experiment_name: string
-  config: Partial<TrainingConfig>
+  config: Partial<TrainingConfig> & { domain?: string; action_type?: string; state_dim?: number }
   current_step: number
   total_steps: number
   checkpoints: string[]
 }
 
 export interface MetricsSnapshot {
+  elapsed_seconds?: number
+  step_seconds?: number
+  estimated_remaining_seconds?: number
+  action_loss?: number
+  action_mae?: number
+  action_accuracy?: number
+  training_warning?: string | null
+  status?: string
+  error?: string | null
+  final_model_dir?: string
   step: number
-  loss: number
-  learning_rate: number
-  grad_norm?: number
-  epoch?: number
-  samples_per_second?: number
+  loss: number | null
+  learning_rate: number | null
+  grad_norm?: number | null
+  epoch?: number | null
+  samples_per_second?: number | null
   gpu_stats?: GpuStats[]
-  val_loss?: number
-  reward?: number
-  kl_divergence?: number
+  val_loss?: number | null
+  reward?: number | null
+  kl_divergence?: number | null
   timestamp: number
 }
 
@@ -158,7 +186,7 @@ export interface DatasetInfo {
   name: string
   path: string
   size_bytes: number
-  format: 'jsonl' | 'txt' | 'parquet' | 'arrow'
+  format: 'jsonl' | 'txt' | 'parquet' | 'arrow' | 'csv'
   num_rows?: number
   modified_at: string
 }
@@ -233,4 +261,53 @@ export interface SystemInfo {
   docker_running: boolean
   accelerate_configs: string[]
   deepspeed_configs: string[]
+}
+
+export interface VLAPreflightReport {
+  ready: boolean
+  checks: { name: string; status: 'pass' | 'warning' | 'error'; detail: string }[]
+  sample: { image: string; instruction: string; state: number[]; actions: unknown[]; valid_timesteps: number; horizon: number } | null
+}
+export interface VLAPrediction {
+  actions: unknown[]
+  action_type: 'continuous' | 'discrete' | 'hybrid'
+  action_dim: number
+  action_horizon: number
+  action_names?: string[]
+  discrete_names?: string[]
+  discrete_classes?: number[]
+  discrete_labels?: string[][]
+}
+
+export interface WorldFoundationModel {
+  id: string; name: string; provider: string; repo_id: string | null; revision: string | null;
+  tasks: string[]; local_weights: boolean; training: boolean; description: string;
+  requirements: string; source: string; license: string;
+}
+export interface WorldFoundationResult {
+  model_id: string; task: string; model_path?: string; resources_path?: string;
+  resolved_revision?: string; video_path?: string; previews?: string[]; frame_count?: number; fps?: number;
+}
+
+export interface LocalWorldFrame {
+  frame: string; step: number; seconds?: number; action_names?: string[]; device?: string; resolution?: number[];
+  session_id?: string; model_id?: string;
+}
+
+export interface WorldResourceReport {
+  model_id: string; operation: string; supported: boolean; training_supported: boolean;
+  status: 'unsupported' | 'blocked' | 'unknown' | 'risk' | 'likely_fit'; device: string;
+  gpu: { id: number; name: string; uuid: string; total_gib: number | null; free_gib: number | null } | null;
+  hardware: { cpu_name: string; cpu_threads: number; ram_total_gib: number; ram_available_gib: number;
+    disk_free_gib: number | null; cache_disk_free_gib: number | null; cgroup_limited: boolean; sampled_at: number };
+  parameters: number; memory_gib: [number | null, number | null]; ram_gib: [number | null, number | null];
+  disk_required_gib: number | null; disk_available_gib: number | null; training_state_lower_bound_gib: number | null;
+  reasons: string[]; warnings: string[]; hints: string[]; basis: string; profile_key: string;
+  benchmark_supported: boolean; benchmark_running: boolean;
+  measurement: { status: string; error?: string; device?: string; gpu_name?: string; measured_at?: number;
+    peak_allocated_gib?: number; peak_reserved_gib?: number; peak_rss_gib?: number; train_step_seconds?: number;
+    warmup_steps?: number; measured_steps?: number } | null;
+  eta: { remaining_steps: number; training_seconds: number; validation_seconds: number | null;
+    total_seconds_low: number; total_seconds_high: number | null; checkpoint_seconds: number;
+    validation_included: boolean; basis: string; note: string } | null;
 }

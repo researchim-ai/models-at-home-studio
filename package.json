@@ -1,7 +1,7 @@
 {
   "name": "models-at-home-studio",
   "version": "0.1.0",
-  "description": "HomeLLM Training Studio — desktop app for training ML models at home",
+  "description": "HomeLLM Training Studio \u2014 desktop app for training ML models at home",
   "author": {
     "name": "Models at Home",
     "email": "team@modelsathome.local"
@@ -10,16 +10,17 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && electron-builder --publish never",
-    "build:linux": "vite build && electron-builder --linux --publish never",
-    "build:win": "vite build && electron-builder --win --publish never",
-    "build:mac": "vite build && electron-builder --mac --publish never",
-    "build:all": "vite build && electron-builder -mwl --publish never",
+    "build": "vite build && electron-builder --config electron-builder.config.cjs --publish never",
+    "build:linux": "vite build && electron-builder --config electron-builder.config.cjs --linux --publish never",
+    "build:win": "vite build && electron-builder --config electron-builder.config.cjs --win --publish never",
+    "build:mac": "vite build && electron-builder --config electron-builder.config.cjs --mac --publish never",
+    "build:all": "vite build && electron-builder --config electron-builder.config.cjs -mwl --publish never",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
-    "postinstall": "electron-builder install-app-deps"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "postinstall": "electron-builder install-app-deps",
+    "test:backend": "python -m pytest backend/tests -q"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.75.0",
@@ -76,34 +77,6 @@
       "!**/*.map",
       "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
       "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}"
-    ],
-    "extraResources": [
-      {
-        "from": "backend",
-        "to": "backend",
-        "filter": [
-          "**/*",
-          "!__pycache__/**",
-          "!*.pyc"
-        ]
-      },
-      {
-        "from": "models-at-home",
-        "to": "models-at-home",
-        "filter": [
-          "**/*",
-          "!__pycache__/**",
-          "!*.pyc",
-          "!models/**",
-          "!datasets/**",
-          "!out/**",
-          "!logs/**",
-          "!notebooks/**",
-          "!.git/**",
-          "!.venv/**",
-          "!*.egg-info/**"
-        ]
-      }
     ],
     "asar": true,
     "asarUnpack": [

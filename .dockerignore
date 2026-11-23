@@ -1,5 +1,5 @@
 # Heavy ML data — never needed in the Docker build context.
-# The studio image only needs backend/ (FROM models-at-home-base:latest already
+# The studio image only needs backend/, requirements-world-foundation.txt and the small examples/ (FROM models-at-home-base:latest already
 # contains the homellm code). These dirs can be hundreds of GB.
 models-at-home/out
 models-at-home/datasets

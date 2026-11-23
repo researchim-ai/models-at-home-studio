@@ -1,6 +1,7 @@
 # Models at Home Studio — Electron Backend
 #
-# docker compose up --build
+# First: docker build -t models-at-home-base:latest ${MAH_RUNTIME_ROOT:-../models-at-home}
+# Then: docker compose up --build
 #
 # The Electron app manages this automatically, but you can run it standalone.
 
@@ -8,26 +9,29 @@ services:
   backend:
     image: models-at-home-studio:latest
     build:
-      context: ./models-at-home
-      dockerfile: Dockerfile
-      args:
-        LLAMA_CPP_BACKEND: ${LLAMA_CPP_BACKEND:-vulkan}
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: mah-studio-backend
     user: "${UID:-1000}:${GID:-1000}"
     ports:
-      - "8000:8000"
-      - "8888:8888"
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8888:8888"
     volumes:
-      - ./models-at-home/datasets:/app/datasets
-      - ./models-at-home/out:/app/out
-      - ./models-at-home/.runs:/app/.runs
-      - ./models-at-home/blueprints:/app/blueprints
-      - ./models-at-home/models:/app/models
-      - ./models-at-home/configs:/app/configs
-      - ./backend:/app/backend
+      - ${MAH_RUNTIME_ROOT:-../models-at-home}/datasets:/app/datasets
+      - ${MAH_RUNTIME_ROOT:-../models-at-home}/out:/app/out
+      - ${MAH_RUNTIME_ROOT:-../models-at-home}/.runs:/app/.runs
+      - ${MAH_RUNTIME_ROOT:-../models-at-home}/blueprints:/app/blueprints
+      - ${MAH_RUNTIME_ROOT:-../models-at-home}/models:/app/models
+      - ${MAH_RUNTIME_ROOT:-../models-at-home}/configs:/app/configs
+      - ./backend:/app/backend:ro
+      - ${MAH_RUNTIME_ROOT:-../models-at-home}/notebooks:/app/notebooks
+      - ${MAH_RUNTIME_ROOT:-../models-at-home}/study_materials:/app/study_materials:ro
     environment:
       - PYTHONUNBUFFERED=1
       - MODELS_AT_HOME_ROOT=/app
+      - HF_TOKEN=${HF_TOKEN:-}
+      - MAH_WORLD_PYTHON=${MAH_DOCKER_WORLD_PYTHON:-}
+      - JUPYTER_BIND_HOST=0.0.0.0
       - MKL_THREADING_LAYER=GNU
       - HOME=/tmp
       - XDG_CACHE_HOME=/tmp/.cache
@@ -59,11 +63,7 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    command: >
-      bash -lc "
-      pip install --no-cache-dir fastapi 'uvicorn[standard]' websockets 2>/dev/null ;
-      python -m uvicorn backend.api:app --host 0.0.0.0 --port 8000
-      "
+    command: ["python", "-m", "uvicorn", "backend.api:app", "--host", "0.0.0.0", "--port", "8000"]
     restart: unless-stopped
 
   notebooks:
@@ -71,22 +71,22 @@ services:
     container_name: mah-studio-notebooks
     user: "${UID:-1000}:${GID:-1000}"
     ports:
-      - "8888:8888"
+      - "127.0.0.1:8889:8888"
     volumes:
-      - ./models-at-home/datasets:/app/datasets
-      - ./models-at-home/out:/app/out
-      - ./models-at-home/.runs:/app/.runs
-      - ./models-at-home/models:/app/models
-      - ./models-at-home/configs:/app/configs
-      - ./models-at-home/notebooks:/app/notebooks
+      - ${MAH_RUNTIME_ROOT:-../models-at-home}/datasets:/app/datasets
+      - ${MAH_RUNTIME_ROOT:-../models-at-home}/out:/app/out
+      - ${MAH_RUNTIME_ROOT:-../models-at-home}/.runs:/app/.runs
+      - ${MAH_RUNTIME_ROOT:-../models-at-home}/models:/app/models
+      - ${MAH_RUNTIME_ROOT:-../models-at-home}/configs:/app/configs
+      - ${MAH_RUNTIME_ROOT:-../models-at-home}/notebooks:/app/notebooks
     environment:
       - PYTHONUNBUFFERED=1
       - MODELS_AT_HOME_ROOT=/app
+      - JUPYTER_BIND_HOST=0.0.0.0
       - MKL_THREADING_LAYER=GNU
       - HOME=/tmp
       - XDG_CACHE_HOME=/tmp/.cache
       - HF_HOME=/tmp/.cache/huggingface
-      - JUPYTER_TOKEN=${JUPYTER_TOKEN:-mah-local}
       - NVIDIA_DRIVER_CAPABILITIES=all
     shm_size: "8gb"
     deploy:
@@ -96,20 +96,7 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    command: >
-      bash -lc "
-      mkdir -p /tmp/.ipython/profile_default/startup /app/notebooks &&
-      cp /app/scripts/jupyter/startup/00_homellm.py /tmp/.ipython/profile_default/startup/00_homellm.py &&
-      jupyter lab
-      --ip=0.0.0.0
-      --port=8888
-      --no-browser
-      --ServerApp.allow_origin='*'
-      --ServerApp.allow_remote_access=True
-      --IdentityProvider.token='${JUPYTER_TOKEN:-mah-local}'
-      --ServerApp.password=''
-      --ServerApp.root_dir=/app/notebooks
-      "
+    command: ["jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--ServerApp.root_dir=/app/notebooks"]
     restart: unless-stopped
     profiles:
       - notebooks

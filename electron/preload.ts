@@ -51,6 +51,7 @@ const api = {
         mode?: string
       }>,
     port: () => ipcRenderer.invoke('backend:port') as Promise<number>,
+    token: () => ipcRenderer.invoke('backend:token') as Promise<string>,
     bootPhase: () => ipcRenderer.invoke('backend:boot-phase') as Promise<BootPhase>,
     openLogs: () => ipcRenderer.invoke('backend:open-logs') as Promise<void>,
     onBootPhase: (cb: (phase: BootPhase) => void): Unsubscribe => {

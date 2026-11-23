@@ -42,6 +42,7 @@ export interface ElectronAPI {
     }>
     restart: () => Promise<{ success: boolean; error?: string; port: number; mode?: string }>
     port: () => Promise<number>
+    token: () => Promise<string>
     bootPhase: () => Promise<BootPhase>
     openLogs: () => Promise<void>
     onBootPhase: (cb: (phase: BootPhase) => void) => Unsubscribe

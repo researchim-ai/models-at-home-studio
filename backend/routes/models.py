@@ -6,8 +6,8 @@ from pathlib import Path
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from backend.paths import get_project_root
+from pydantic import BaseModel, Field
+from backend.paths import get_project_root, safe_child
 
 router = APIRouter()
 
@@ -23,14 +23,14 @@ class DownloadRequest(BaseModel):
 
 
 @router.get("/local")
-async def list_local_models():
+def list_local_models():
     """List models downloaded to models/ directory."""
     models = []
     if MODELS_DIR.exists():
         for d in sorted(MODELS_DIR.iterdir()):
-            if d.is_dir() and not d.name.startswith("."):
-                size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
-                arch = _detect_architecture(d)
+            if not d.is_symlink() and not d.name.startswith(".") and (d.is_dir() or d.suffix.lower() == ".gguf"):
+                size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file()) if d.is_dir() else d.stat().st_size
+                arch = _detect_architecture(d) if d.is_dir() else "gguf"
                 models.append({
                     "name": d.name,
                     "path": str(d),
@@ -43,12 +43,12 @@ async def list_local_models():
 
 
 @router.get("/trained")
-async def list_trained_models():
+def list_trained_models():
     """List trained models from out/ directory."""
     models = []
     if OUTPUT_DIR.exists():
         for d in sorted(OUTPUT_DIR.iterdir()):
-            if d.is_dir() and not d.name.startswith("."):
+            if d.is_dir() and not d.is_symlink() and not d.name.startswith("."):
                 final = d / "final_model"
                 target = final if final.exists() else d
                 size = sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
@@ -70,15 +70,16 @@ async def list_trained_models():
 
 
 @router.post("/download")
-async def download_model(req: DownloadRequest):
+def download_model(req: DownloadRequest):
     """Download a model from HuggingFace Hub."""
+    save_name = req.save_name or req.repo_id.split("/")[-1]
+    save_path = safe_child(MODELS_DIR, save_name)
+
     try:
         from huggingface_hub import snapshot_download
     except ImportError:
         raise HTTPException(500, "huggingface_hub not installed")
 
-    save_name = req.save_name or req.repo_id.split("/")[-1]
-    save_path = MODELS_DIR / save_name
 
     try:
         snapshot_download(
@@ -91,15 +92,10 @@ async def download_model(req: DownloadRequest):
 
 
 @router.delete("/local/{name:path}")
-async def delete_local_model(name: str):
+def delete_local_model(name: str):
     """Delete a downloaded model from the models/ directory."""
     import shutil
-    path = MODELS_DIR / name
-    try:
-        path = path.resolve()
-        path.relative_to(MODELS_DIR.resolve())
-    except (ValueError, OSError):
-        raise HTTPException(400, "Invalid model path")
+    path = safe_child(MODELS_DIR, name)
     if not path.exists():
         raise HTTPException(404, "Model not found")
     shutil.rmtree(path) if path.is_dir() else path.unlink()
@@ -107,12 +103,14 @@ async def delete_local_model(name: str):
 
 
 @router.post("/estimate-memory")
-async def estimate_memory(config: dict):
+def estimate_memory(config: dict):
     """Estimate VRAM usage (simple)."""
+    if config.get('model_type') == 'blueprint':
+        raise HTTPException(400, 'VRAM estimation for arbitrary blueprint graphs is not supported')
     try:
         from homellm.models.memory_estimator import estimate_memory_footprint
         result = estimate_memory_footprint(
-            config,
+            _memory_config(config),
             batch_size=int(config.get("batch_size", 1) or 1),
             distributed_mode=config.get("parallel_mode", "default") or "default",
             num_gpus=max(1, len(config.get("gpu_ids") or [])) or 1,
@@ -124,43 +122,20 @@ async def estimate_memory(config: dict):
 
 class EstimateMemoryDetailedRequest(BaseModel):
     config: dict
-    batch_size: int = 1
+    batch_size: int = Field(default=1, gt=0)
     distributed_mode: str = "default"
-    num_gpus: int = 1
+    num_gpus: int = Field(default=1, gt=0)
 
 
 @router.post("/estimate-memory-detailed")
-async def estimate_memory_detailed(req: EstimateMemoryDetailedRequest):
+def estimate_memory_detailed(req: EstimateMemoryDetailedRequest):
     """Full memory estimator — returns breakdown (weights/grads/optim/activations)."""
+    if req.config.get('model_type') == 'blueprint':
+        raise HTTPException(400, 'VRAM estimation for arbitrary blueprint graphs is not supported')
     try:
         from homellm.models.memory_estimator import estimate_memory_footprint
 
-        cfg = dict(req.config or {})
-
-        # Подтягиваем hidden_size/num_layers/... из HF config.json если указан base_model_path
-        if cfg.get("model_type") == "hf" and cfg.get("base_model_path"):
-            base_path = Path(cfg["base_model_path"])
-            cfg_path = base_path / "config.json" if base_path.is_dir() else None
-            if cfg_path and cfg_path.exists():
-                try:
-                    hf_cfg = json.loads(cfg_path.read_text())
-                    for k in ("hidden_size", "num_hidden_layers", "num_attention_heads",
-                             "intermediate_size", "max_position_embeddings", "vocab_size"):
-                        if k in hf_cfg and k not in cfg:
-                            cfg[k] = hf_cfg[k]
-                    if "num_hidden_layers" in cfg and "num_layers" not in cfg:
-                        cfg["num_layers"] = cfg["num_hidden_layers"]
-                    if "num_attention_heads" in cfg and "n_heads" not in cfg:
-                        cfg["n_heads"] = cfg["num_attention_heads"]
-                except Exception:
-                    pass
-
-        # Разумные дефолты для Home-модели, чтобы estimator не падал
-        cfg.setdefault("hidden_size", 512)
-        cfg.setdefault("num_layers", 8)
-        cfg.setdefault("n_heads", 8)
-        cfg.setdefault("seq_len", cfg.get("sft_max_seq_length") or 2048)
-        cfg.setdefault("vocab_size", 50257)
+        cfg = _memory_config(req.config)
 
         return estimate_memory_footprint(
             cfg,
@@ -172,8 +147,38 @@ async def estimate_memory_detailed(req: EstimateMemoryDetailedRequest):
         return {"error": str(e)}
 
 
+def _memory_config(value: dict) -> dict:
+    cfg = dict(value)
+    # Architecture of a loaded model is authoritative. UI defaults for the
+    # previous from-scratch model must not replace its actual parameter count.
+    source = cfg.get('base_model_path') or cfg.get('model_path')
+    if cfg.get('model_type') in ('hf', 'checkpoint') and source:
+        path = Path(source).expanduser()
+        if not path.is_absolute():
+            path = PROJECT_ROOT / path
+        config_file = path / 'config.json'
+        if config_file.is_file():
+            saved = json.loads(config_file.read_text())
+            # Multimodal configs commonly nest the language model dimensions.
+            saved = saved.get('text_config', saved)
+            aliases = {'hidden_size': ('hidden_size', 'n_embd'), 'num_layers': ('num_hidden_layers', 'n_layer'),
+                       'n_heads': ('num_attention_heads', 'n_head'), 'vocab_size': ('vocab_size',),
+                       'intermediate_size': ('intermediate_size',)}
+            for target, candidates in aliases.items():
+                for key in candidates:
+                    if saved.get(key) is not None:
+                        cfg[target] = saved[key]
+                        break
+            if cfg.get('hidden_size') and not saved.get('intermediate_size'):
+                cfg['intermediate_size'] = 4 * cfg['hidden_size']
+    for key, default in dict(hidden_size=512, num_layers=8, n_heads=8, vocab_size=50257).items():
+        cfg.setdefault(key, default)
+    cfg['seq_len'] = cfg.get('sft_max_seq_length', cfg.get('seq_len', 2048)) if cfg.get('stage') == 'sft' else cfg.get('seq_len', 2048)
+    return cfg
+
+
 @router.get("/chat-template")
-async def get_chat_template(model_path: str):
+def get_chat_template(model_path: str):
     """Return the chat_template from a model's tokenizer_config.json if present."""
     p = Path(model_path)
     if not p.exists():

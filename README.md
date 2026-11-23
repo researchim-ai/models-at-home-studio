@@ -7,6 +7,82 @@ Electron-окно с React UI внутри. Бэкенд на Python (FastAPI) �
 автоматически при старте приложения: через Docker в режиме `Auto`, либо
 нативно через локальный Python как fallback/ручной режим.
 
+
+## World Models Studio
+
+Отдельная `/world-models` страница: собственные Latent GRU и Gaussian RSSM,
+обучение динамики по эпизодам с continuous/discrete/hybrid действиями,
+optional states/rewards/dones, preflight, validation, checkpoints/resume и
+предсказанные кадры в Rollout. Есть встроенное синтетическое демо.
+Во вкладке «Готовые модели» встроены DIAMOND CS:GO и Atari (Breakout/Pong):
+собственные локальные model workers, pretrained weights, игровой экран,
+WASD/камера, step/pause/reset. Архитектуры и sampler включены в репозиторий.
+Есть CPU-проба и GPU-режим; после скачивания весов inference работает офлайн.
+Cosmos 3 оставлен дополнительным локальным pipeline.
+Инструкция: [docs/WORLD_FOUNDATION_MODELS.md](docs/WORLD_FOUNDATION_MODELS.md).
+Подробности: [docs/WORLD_MODELS_STUDIO.md](docs/WORLD_MODELS_STUDIO.md).
+
+## VLA Studio
+
+Отдельная страница **VLA Studio** обучает action-модели для робототехники,
+игр/симуляторов и mouse/keyboard-сценариев. Есть непрерывные, дискретные
+и смешанные action chunks, Native VLA с нуля и VLM + Action Head с
+Full/LoRA/QLoRA и optional Unsloth. Встроены синтетические примеры,
+preflight, метрики/графики, validation, checkpoints/resume и action preview.
+
+Контракты JSONL, установка и проверенные границы — [docs/VLA_STUDIO.md](docs/VLA_STUDIO.md).
+
+## Проверка и исправления (23 ноября 2026)
+
+Актуальные изменения и границы проверки описаны в [docs/FIXES.md](docs/FIXES.md).
+Первоначальная карта находится в [docs/PROJECT_MAP.md](docs/PROJECT_MAP.md).
+Реальные VLM-прогоны, исправления, окружение и приоритеты: [docs/VLM_VALIDATION.md](docs/VLM_VALIDATION.md).
+В VLM Studio перед запуском нажми **Проверить эксперимент**: будет показан пример
+картинки и масок loss, проверены окружение и выборка данных без загрузки весов.
+
+Актуальные VLM-пресеты: **Qwen3-VL, Qwen3.5 и Gemma 3** (Gemma пока без локальной GPU-проверки).
+Для VLM подключены **наши GRPO / Dr.GRPO / DAPO / SDPO** из `homellm.training.rl`:
+собственные losses, advantages и ReplayBuffer с мультимодальным policy/reference/teacher.
+Выбор **Transformers или Unsloth** относится к модели и ускорению; TRL trainer
+для GRPO не используется. Обычный профиль не требует TRL, optional Unsloth
+имеет собственную зависимость от него. Новые VLM используют отдельную `.venv-vlm`
+или `MAH_VLM_PYTHON`; основной API и текстовые модели сохраняют прежний Python.
+Установка, текущие GPU-проверки и границы — в [руководстве VLM](docs/VLM_VALIDATION.md).
+
+- ML-исходники могут лежать в `./models-at-home`, соседнем `../models-at-home`
+  или в каталоге `MAH_RUNTIME_ROOT`. Сборка проверяет наличие runtime и включает его код.
+- Native использует `MAH_PYTHON`, затем проектное `.venv`, затем Python из PATH.
+  Проверяются импорты FastAPI, uvicorn, psutil, Accelerate и Transformers.
+  Для другого интерпретатора: `MAH_PYTHON=/path/to/python npm run dev`.
+- В установленной программе данные находятся в `userData/workspace`, а не в ресурсах
+  приложения. `MODELS_AT_HOME_ROOT` позволяет выбрать другой workspace.
+- Каждый новый запуск получает отдельный `output_dir/<run_id>`. Продолжение
+  восстанавливает последний checkpoint; для увеличения законченного плана API принимает
+  `POST /api/training/runs/{id}/continue` с `{"max_steps": <новый предел>}`.
+  Legacy GRPO runtime не поддерживает resume — API возвращает явную ошибку.
+- Закрытие или перезапуск backend останавливает принадлежащие ему дочерние задачи.
+  Старые живые PID из неподтверждённых файлов не завершаются автоматически.
+- Electron передаёт случайный токен сессии HTTP/WS-клиенту. Jupyter использует
+  случайный токен; кнопка Start Jupyter получает его вместе с URL.
+- Для standalone Compose сначала собери базовый ML-образ:
+  `docker build -t models-at-home-base:latest ../models-at-home`, затем
+  `docker compose up --build`. Профиль `notebooks` публикует отдельный Jupyter на 8889;
+  его случайный токен показывается в логах. Управляемый через API Jupyter использует 8888.
+
+Проверки: `npm run typecheck`, `npm test`,
+`.venv/bin/python -m pytest backend/tests -q`, `npx vite build`.
+Дополнительные интеграционные сценарии: `scripts/smoke-desktop.cjs` и
+`scripts/smoke-training.py` (последнему нужен ML runtime на PYTHONPATH и GPU).
+Он поддерживает `--multi-gpu` (GPU 0 и 1) и `--architecture home|gpt2|home_moe|blueprint`;
+по умолчанию использует GPU 1. Проверяет pretrain, resume, inference и SFT chat/instruct
+на временных локальных данных без скачиваний.
+
+В Model Builder собери схему и нажми **Обучить эту модель**. Training Studio получит
+её снимок; выбери tokenizer и данные перед запуском. **Edit JSON → Apply JSON**
+позволяет редактировать связи графа с проверкой структуры. Для Blueprint проверены
+pretrain, resume, inference и SFT; GRPO, Unsloth и QLoRA отклоняются явно.
+
+
 ---
 
 ## Быстрый старт
@@ -23,9 +99,15 @@ Electron-окно с React UI внутри. Бэкенд на Python (FastAPI) �
 # JS-зависимости
 npm install
 
-# Python-зависимости для бэкенда
-pip install fastapi "uvicorn[standard]" websockets pydantic
+# Отдельный Python с ML- и API-зависимостями
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e "../models-at-home[full,rl]"
+pip install -r backend/requirements-dev.txt
 ```
+
+На Windows активируй `.venv\Scripts\activate` вместо `source`. Если ML-runtime
+находится в другом месте, используй его путь при установке и `MAH_RUNTIME_ROOT`.
 
 ### 2. Запуск (dev mode)
 
@@ -240,9 +322,11 @@ models-at-home-studio/
 │   ├── preload.ts          #   contextBridge (безопасный API)
 │   └── docker.ts           #   Docker management (dockerode)
 ├── src/                    # React frontend (renderer)
-│   ├── pages/              #   7 страниц
+│   ├── pages/              #   9 страниц
 │   │   ├── TrainingStudio  #   Обучение (7 вкладок)
 │   │   ├── VLMStudio       #   Visual Language Models
+│   │   ├── WorldModelsStudio #   Обучение динамики и imagined rollouts
+│   │   ├── VLAStudio       #   Vision-Language-Action policies
 │   │   ├── ModelBuilder    #   Визуальный конструктор
 │   │   ├── StudyCenter     #   Учебные материалы
 │   │   ├── Notebooks       #   JupyterLab

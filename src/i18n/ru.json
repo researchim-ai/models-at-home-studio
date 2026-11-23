@@ -1,4 +1,5 @@
 {
+  "builder.train": "Обучить эту модель",
   "nav.training": "Обучение",
   "nav.vlm": "VLM Студия",
   "nav.builder": "Конструктор моделей",
@@ -6,14 +7,11 @@
   "nav.notebooks": "Ноутбуки",
   "nav.agent": "Агент",
   "nav.settings": "Настройки",
-
   "docker.running": "Запущен",
   "docker.stopped": "Остановлен",
   "docker.building": "Сборка...",
-
   "app.title": "HomeLLM Training Studio",
   "app.subtitle": "Тренируй модели дома",
-
   "sidebar.training_stage": "Этап обучения",
   "sidebar.base_model": "Базовая модель",
   "sidebar.hyperparams": "Гиперпараметры",
@@ -21,31 +19,26 @@
   "sidebar.gpu_memory": "Память GPU",
   "sidebar.tuning_method": "Метод тюнинга",
   "sidebar.architecture": "Архитектура модели",
-
   "arch.title": "Архитектура",
   "arch.hidden_size": "Hidden Size",
   "arch.num_layers": "Число слоёв",
   "arch.n_heads": "Головы внимания",
   "arch.num_experts": "Число экспертов",
   "arch.experts_per_tok": "Top-K (активных экспертов)",
-
   "tuning.lora_r": "LoRA r (ранг)",
   "tuning.lora_alpha": "LoRA alpha",
   "tuning.lora_dropout": "LoRA dropout",
   "tuning.target_modules": "Target-модули",
-
   "stage.pretrain": "Претрейн",
   "stage.continual_pretrain": "Продолжение претрейна",
   "stage.sft": "SFT (Дообучение)",
   "stage.grpo": "GRPO (Обучение с подкреплением)",
-
   "model.select": "Выбрать модель",
   "model.type": "Тип модели",
   "model.architecture": "Архитектура",
   "model.path": "Путь к модели",
   "model.params": "Параметры",
   "model.downloaded": "Скачанные модели",
-
   "training.batch_size": "Размер батча",
   "training.gradient_accumulation": "Аккумуляция градиентов",
   "training.effective_batch": "Эффективный батч",
@@ -62,28 +55,23 @@
   "training.mode": "Режим обучения",
   "training.mode_epochs": "По эпохам",
   "training.mode_steps": "По шагам",
-
   "precision.mixed": "Смешанная точность",
   "precision.fp16_pure": "FP16 Pure (без GradScaler)",
   "precision.grad_checkpoint": "Чекпоинтинг градиентов",
   "precision.flash_attention": "Flash Attention",
   "precision.liger_kernel": "Liger Kernel",
   "precision.liger_fused_ce": "Fused Loss (экономия памяти)",
-
   "lora.method": "Метод LoRA",
   "lora.rank": "Ранг",
   "lora.alpha": "Альфа",
   "lora.dropout": "Dropout",
   "lora.target_modules": "Целевые модули",
-
   "grpo.group_size": "Размер группы",
   "grpo.temperature": "Температура",
   "grpo.max_new_tokens": "Макс. новых токенов",
   "grpo.kl_weight": "Вес KL",
-
   "parallel.mode": "Режим параллелизма",
   "parallel.single_gpu": "Одна GPU",
-
   "data.select_dataset": "Выбрать датасет",
   "data.download_hf": "Скачать с HuggingFace",
   "data.available_datasets": "Доступные датасеты",
@@ -93,13 +81,11 @@
   "data.split": "Сплит",
   "data.save_as": "Сохранить как",
   "data.local_datasets": "Локальные датасеты",
-
   "save.output_dir": "Папка вывода",
   "save.save_every": "Сохранять каждые N шагов",
   "save.log_every": "Логировать каждые N шагов",
   "save.export_on_checkpoint": "Экспортировать final_model при каждом чекпоинте",
   "save.merge_lora": "Объединять LoRA в final_model",
-
   "tabs.launch": "Запуск",
   "tabs.monitoring": "Мониторинг",
   "tabs.chat": "Чат",
@@ -107,11 +93,9 @@
   "tabs.data": "Данные",
   "tabs.models": "Модели",
   "tabs.docs": "Документация",
-
   "launch.config_title": "Конфигурация обучения",
   "launch.model": "Модель",
   "launch.data": "Данные",
-
   "status.running": "Выполняется",
   "status.completed": "Завершено",
   "status.error": "Ошибка",
@@ -119,14 +103,12 @@
   "status.initializing": "Инициализация",
   "status.step": "Шаг",
   "status.time": "Прошло времени",
-
   "metrics.train_loss": "Loss обучения",
   "metrics.val_loss": "Loss валидации",
   "metrics.reward": "Награда",
   "metrics.kl_divergence": "KL дивергенция",
   "metrics.grad_norm": "Норма градиента",
   "metrics.gpu_load": "Загрузка GPU",
-
   "button.start_training": "Начать обучение",
   "button.stop_training": "Остановить обучение",
   "button.start_grpo": "Запустить GRPO",
@@ -138,7 +120,6 @@
   "button.continue_training": "Продолжить обучение",
   "button.export_model": "Экспорт модели",
   "button.clear_history": "Очистить историю",
-
   "chat.title": "Чат",
   "chat.model_select": "Выбор модели",
   "chat.system_prompt": "Системный промпт",
@@ -146,32 +127,26 @@
   "chat.inference_backend": "Бэкенд инференса",
   "chat.message_placeholder": "Напишите сообщение...",
   "chat.thinking": "Думаю...",
-
   "models.manager": "Менеджер моделей",
   "models.download_hf": "Скачать с HuggingFace",
   "models.model_id": "ID модели",
   "models.local_models": "Локальные модели",
   "models.trained_models": "Обученные модели",
-
   "history.title": "История обучения",
-
   "gpu.found": "GPU найдена",
   "gpu.not_found": "GPU не найдена",
   "gpu.vram": "VRAM",
   "gpu.utilization": "Утилизация",
-
   "settings.title": "Настройки",
   "settings.language": "Язык",
   "settings.theme": "Тема",
   "settings.docker": "Настройки Docker",
   "settings.api_url": "URL бэкенда",
-
   "vlm.title": "VLM Студия",
   "vlm.subtitle": "Обучение визуально-языковых моделей",
   "vlm.stage.sft": "VLM дообучение",
   "vlm.stage.pretrain": "VLM претрейн",
   "vlm.stage.grpo": "VLM GRPO",
-
   "agent.title": "Студия агента",
   "agent.subtitle": "Чат с ИИ-агентом на базе llama.cpp",
   "agent.start_server": "Запустить сервер",
@@ -199,20 +174,16 @@
   "agent.session_deleted": "Сессия удалена",
   "agent.server_required": "Сначала запусти llama-server",
   "agent.start_session_hint": "Создай новую сессию, чтобы начать диалог",
-
   "builder.title": "Визуальный конструктор моделей",
   "builder.subtitle": "Создавайте архитектуры моделей визуально",
   "builder.blocks": "Блоки",
   "builder.save": "Сохранить чертёж",
   "builder.analyze": "Анализ",
-
   "study.title": "Учебный центр",
   "study.subtitle": "Материалы для изучения ML/AI",
-
   "notebooks.title": "Ноутбуки",
   "notebooks.subtitle": "Интеграция JupyterLab",
   "notebooks.open": "Открыть JupyterLab",
-
   "common.loading": "Загрузка...",
   "common.none": "Нет",
   "common.enabled": "Включено",
@@ -227,19 +198,15 @@
   "common.path": "Путь",
   "common.date": "Дата",
   "common.status": "Статус",
-
   "error.generic": "Произошла ошибка",
   "error.no_model": "Модель не выбрана",
   "error.no_dataset": "Датасет не выбран",
-
   "success.training_complete": "Обучение успешно завершено",
   "success.downloaded": "Скачивание завершено",
-
   "onboarding.title": "Добро пожаловать в Models at Home!",
   "onboarding.subtitle": "Давайте настроим всё для вас",
   "onboarding.language": "Выберите язык",
   "onboarding.theme": "Выберите тему",
-
   "launch.model_preview": "Превью модели",
   "launch.arch_from_scratch": "Архитектура (с нуля)",
   "launch.no_base_model": "Базовая модель не выбрана",
@@ -249,15 +216,12 @@
   "launch.training_mode": "Режим тренировки",
   "launch.not_selected": "Не выбрано",
   "launch.not_ready_hint": "Сначала выберите модель, данные и режим тренировки",
-
   "metrics.title": "Мониторинг",
   "metrics.kl": "KL дивергенция",
-
   "monitoring.select_run": "Выберите запуск в Истории, чтобы видеть метрики в реальном времени",
   "monitoring.logs": "Логи",
   "monitoring.gpu_stats": "Статистика GPU",
   "monitoring.util": "Утилизация",
-
   "chat.gen_params": "Параметры генерации",
   "chat.clear": "Очистить чат",
   "chat.temperature": "Температура",
@@ -269,17 +233,14 @@
   "chat.sys_reasoning": "Reasoning",
   "chat.sys_coder": "Программист",
   "chat.sys_translator": "Переводчик",
-
   "history.empty": "Пока нет предыдущих запусков",
   "history.checkpoints": "Чекпоинты",
   "history.continue": "Продолжить",
   "history.confirm_delete": "Удалить этот запуск?",
   "history.chat_selected": "Модель выбрана для чата",
-
   "common.yes": "Да",
   "common.no": "Нет",
   "common.delete": "Удалить",
-
   "data.presets_for": "Пресеты для",
   "data.repo_id": "Репозиторий (ID)",
   "data.subset": "Subset / конфиг",
@@ -288,13 +249,11 @@
   "data.empty": "Пока нет локальных датасетов",
   "data.selected": "Датасет выбран",
   "data.selected_badge": "выбран",
-
   "models.save_name": "Имя для сохранения",
   "models.use": "Исп.",
   "models.use_as_base": "Использовать как базовую",
   "models.used_as_base": "Установлена как базовая модель",
   "models.empty": "Модели не найдены",
-
   "docs.quickstart": "Быстрый старт",
   "docs.stages": "Этапы обучения",
   "docs.distributed": "Распределённое обучение",
@@ -341,5 +300,15 @@
   "docs.tr_gibberish_t": "Модель выдаёт бессмыслицу",
   "docs.tr_gibberish": "проверьте токенизатор/chat template, дайте достаточно шагов обучения",
   "docs.tr_slow_t": "Обучение медленное",
-  "docs.tr_slow": "включите flash attention + liger, увеличьте батч, проверьте утилизацию GPU"
+  "docs.tr_slow": "включите flash attention + liger, увеличьте батч, проверьте утилизацию GPU",
+  "status.starting": "Запускается",
+  "status.training": "Обучается",
+  "status.building_model": "Загрузка модели",
+  "status.resumed": "Продолжено",
+  "status.unknown": "Неизвестно",
+  "stage.vlm_pretrain": "VLM Pretrain",
+  "stage.vlm_sft": "VLM SFT",
+  "stage.vlm_grpo": "VLM GRPO",
+  "nav.worldModels": "World Models",
+  "nav.vla": "VLA Studio"
 }

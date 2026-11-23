@@ -2,6 +2,9 @@ import { app, BrowserWindow, ipcMain, shell, dialog, Menu, nativeImage } from 'e
 import path from 'path'
 import fs from 'fs'
 import net from 'net'
+import { randomBytes } from 'crypto'
+import { terminateChild } from './process'
+import { resolveRuntime, prepareWorkspace, externalUrl } from './paths'
 import { spawn, spawnSync, type ChildProcess } from 'child_process'
 import { DockerManager } from './docker'
 import { loadConfig, saveConfig, type AppConfig, type BackendMode } from './config'
@@ -17,9 +20,14 @@ let mainWindow: BrowserWindow | null = null
 let dockerManager: DockerManager | null = null
 let backendProcess: ChildProcess | null = null
 let backendPort = 8000
+const apiToken = randomBytes(32).toString('hex')
 let backendStartError: string | null = null
 let currentMode: 'native' | 'docker' | 'offline' = 'offline'
 let booting = false
+let startup: Promise<void> | null = null
+let operations: Promise<unknown> = Promise.resolve()
+let runtimeRoot = ''
+let workspaceRoot = ''
 
 // Boot phases — streamed to renderer for splash screen feedback
 type BootPhase =
@@ -96,13 +104,18 @@ function findAvailablePort(start = 8000): Promise<number> {
 // ---------------------------------------------------------------------------
 
 function resolvePythonCommand(): string | null {
-  const candidates = process.platform === 'win32'
-    ? ['python', 'py', 'python3']
-    : ['python3', 'python']
+  const explicit = process.env.MAH_PYTHON
+  const localEnvironment = process.platform === 'win32'
+    ? path.join(getResourcePath(), '.venv', 'Scripts', 'python.exe')
+    : path.join(getResourcePath(), '.venv', 'bin', 'python')
+  const candidates = explicit
+    ? [explicit]
+    : [localEnvironment, ...(process.platform === 'win32' ? ['python', 'py', 'python3'] : ['python3', 'python'])]
   for (const cmd of candidates) {
     try {
-      const result = spawnSync(cmd, ['--version'], { stdio: 'pipe' })
+      const result = spawnSync(cmd, ['-c', 'import fastapi, uvicorn, psutil, accelerate; from transformers import AutoTokenizer, AutoModelForCausalLM'], { stdio: 'pipe', timeout: 20000 })
       if (result.status === 0) return cmd
+      if (result.stderr?.length) backendStartError = result.stderr.toString().trim().split('\n').slice(-2).join(' ')
     } catch { /* continue */ }
   }
   return null
@@ -126,7 +139,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     backgroundColor: '#09090b',
@@ -143,8 +156,13 @@ function createWindow() {
   }
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    try { void shell.openExternal(externalUrl(url)) } catch { /* unsupported scheme */ }
     return { action: 'deny' }
+  })
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const current = mainWindow?.webContents.getURL()
+    if (url !== current) event.preventDefault()
   })
 
   mainWindow.webContents.on('did-finish-load', () => {
@@ -216,8 +234,7 @@ function buildAppMenu() {
         {
           label: 'Restart Backend',
           click: async () => {
-            await stopBackend()
-            await startBackend().catch((err) => console.error('Restart failed:', err))
+            await restartBackend().catch((err) => console.error('Restart failed:', err))
           },
         },
         {
@@ -259,12 +276,28 @@ function buildAppMenu() {
 // Backend lifecycle — dispatcher based on config.backendMode
 // ---------------------------------------------------------------------------
 
-async function startBackend(): Promise<void> {
+function startBackend(): Promise<void> {
+  if (!startup) startup = startBackendOnce().finally(() => { startup = null })
+  return startup
+}
+
+function restartBackend(): Promise<void> {
+  const task = operations.catch(() => {}).then(async () => {
+    await startup?.catch(() => {})
+    await stopBackend()
+    await startBackend()
+  })
+  operations = task
+  return task
+}
+
+async function startBackendOnce(): Promise<void> {
   if (booting || backendProcess || currentMode === 'docker') return
   booting = true
   backendStartError = null
   emitBootPhase({ phase: 'starting' })
 
+  if (!runtimeRoot) { booting = false; throw new Error(backendStartError ?? 'ML runtime missing') }
   const config = loadConfig()
   const mode = config.backendMode
 
@@ -290,6 +323,7 @@ async function startBackend(): Promise<void> {
       }
     }
 
+    if (quitting) return
     await startBackendNative()
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -346,6 +380,7 @@ async function startBackendDocker(config: AppConfig): Promise<boolean> {
     hostPort,
     jupyterPort,
     gpu: config.dockerGpu,
+    apiToken,
   })
   if (!started.success) {
     backendStartError = started.error ?? 'Container start failed'
@@ -355,11 +390,13 @@ async function startBackendDocker(config: AppConfig): Promise<boolean> {
   backendPort = started.hostPort ?? hostPort
   const healthy = await dockerManager.waitForHealth(backendPort, {
     timeoutMs: 120_000,
+    apiToken,
     onTick: (attempt) =>
       emitBootPhase({ phase: 'waiting-container-health', attempt }),
   })
   if (!healthy) {
     backendStartError = 'Container did not become healthy in 2 minutes'
+    await dockerManager.stopContainer()
     return false
   }
 
@@ -368,125 +405,83 @@ async function startBackendDocker(config: AppConfig): Promise<boolean> {
   return true
 }
 
-function startBackendNative(): Promise<void> {
-  return new Promise(async (resolve, reject) => {
-    emitBootPhase({ phase: 'starting-python' })
-
-    const pythonCmd = resolvePythonCommand()
-    if (!pythonCmd) {
-      const err = new Error('Python 3 not found in PATH')
-      backendStartError = err.message
-      reject(err)
-      return
-    }
-
-    backendPort = await findAvailablePort(8000)
-    const projectRoot = getResourcePath()
-
-    console.log(`[backend] Starting native on port ${backendPort} with ${pythonCmd}`)
-
-    backendProcess = spawn(
-      pythonCmd,
-      [
-        '-m', 'uvicorn', 'backend.api:app',
-        '--host', '127.0.0.1',
-        '--port', String(backendPort),
-        ...(isDev ? ['--reload'] : []),
-      ],
-      {
-        cwd: projectRoot,
-        env: {
-          ...process.env,
-          PYTHONUNBUFFERED: '1',
-          PYTHONPATH: projectRoot,
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
-    )
-
-    let started = false
-    const logPath = path.join(app.getPath('logs'), 'backend.log')
-    fs.mkdirSync(path.dirname(logPath), { recursive: true })
-    const logStream = fs.createWriteStream(logPath, { flags: 'a' })
-    logStream.write(`\n--- Session start ${new Date().toISOString()} ---\n`)
-
-    const onData = (buf: Buffer) => {
-      const line = buf.toString()
-      logStream.write(line)
-      process.stdout.write(`[backend] ${line}`)
-      if (!started) {
-        const trimmed = line.split('\n').find((l) => l.trim()) ?? ''
-        if (trimmed) emitBootPhase({ phase: 'python-starting', line: trimmed })
-      }
-      if (!started && /Uvicorn running|Application startup complete/.test(line)) {
-        started = true
-        backendStartError = null
-        currentMode = 'native'
-        emitBootPhase({ phase: 'ready', mode: 'native', port: backendPort })
-        resolve()
-      }
-    }
-
-    backendProcess.stdout?.on('data', onData)
-    backendProcess.stderr?.on('data', onData)
-
-    backendProcess.on('error', (err) => {
-      console.error('[backend] spawn error:', err.message)
-      backendStartError = err.message
-      backendProcess = null
-      if (!started) reject(err)
-    })
-
-    backendProcess.on('exit', (code, signal) => {
-      console.log(`[backend] Exited with code=${code} signal=${signal}`)
-      logStream.write(`--- Exit code=${code} signal=${signal} ---\n`)
-      logStream.end()
-      backendProcess = null
-      if (!started) {
-        backendStartError = `Backend exited early (code ${code})`
-        reject(new Error(backendStartError))
-      }
-    })
-
-    const startupTimeout = setTimeout(() => {
-      if (!started) {
-        const err = new Error('Backend did not become ready in 60 seconds')
-        backendStartError = err.message
-        emitBootPhase({ phase: 'failed', error: err.message })
-        try { backendProcess?.kill('SIGTERM') } catch { /* ignore */ }
-        reject(err)
-      }
-    }, 60_000)
-
-    backendProcess.once('exit', () => clearTimeout(startupTimeout))
+async function startBackendNative(): Promise<void> {
+  emitBootPhase({ phase: 'starting-python' })
+  const pythonCmd = resolvePythonCommand()
+  if (!pythonCmd) throw new Error(`Python ML/API imports failed. Use a compatible .venv or set MAH_PYTHON. ${backendStartError ?? ''}`)
+  backendPort = await findAvailablePort(8000)
+  const projectRoot = getResourcePath()
+  const child = spawn(pythonCmd, [
+    '-m', 'uvicorn', 'backend.api:app', '--host', '127.0.0.1', '--port', String(backendPort),
+  ], {
+    cwd: projectRoot,
+    detached: process.platform !== 'win32',
+    env: {
+      ...process.env, MAH_API_TOKEN: apiToken, PYTHONUNBUFFERED: '1', MODELS_AT_HOME_ROOT: workspaceRoot,
+      PYTHONPATH: [projectRoot, runtimeRoot, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
   })
+  backendProcess = child
+  let spawnError: Error | null = null
+  const logPath = path.join(app.getPath('logs'), 'backend.log')
+  fs.mkdirSync(path.dirname(logPath), { recursive: true })
+  const log = fs.createWriteStream(logPath, { flags: 'a' })
+  log.on('error', err => console.error('[backend] log write failed:', err))
+  log.write(`\n--- Session start ${new Date().toISOString()} ---\n`)
+  const onData = (buf: Buffer) => {
+    const line = buf.toString()
+    log.write(line)
+    if (currentMode !== 'native') emitBootPhase({ phase: 'python-starting', line: line.trim().slice(-500) })
+  }
+  child.stdout?.on('data', onData)
+  child.stderr?.on('data', onData)
+  child.on('error', err => {
+    spawnError = err
+    log.end()
+    if (backendProcess === child) backendProcess = null
+  })
+  child.once('exit', (code, signal) => {
+    log.end(`--- Exit code=${code} signal=${signal} ---\n`)
+    if (backendProcess === child) {
+      backendProcess = null
+      currentMode = 'offline'
+      backendStartError = `Backend exited (code ${code})`
+      emitBootPhase({ phase: 'failed', error: backendStartError })
+    }
+  })
+  const deadline = Date.now() + 60_000
+  while (Date.now() < deadline) {
+    if (quitting) { await terminateChild(child); return }
+    if (spawnError) throw spawnError
+    if (child.exitCode !== null || child.signalCode !== null) throw new Error('Backend exited before becoming healthy; see backend.log')
+    try {
+      const response = await fetch(`http://127.0.0.1:${backendPort}/api/system/health`, { signal: AbortSignal.timeout(1500), headers: { 'X-Studio-Token': apiToken } })
+      if (response.ok && backendProcess === child) {
+        currentMode = 'native'
+        backendStartError = null
+        emitBootPhase({ phase: 'ready', mode: 'native', port: backendPort })
+        return
+      }
+    } catch { /* not ready */ }
+    await new Promise(resolve => setTimeout(resolve, 250))
+  }
+  await terminateChild(child)
+  throw new Error('Backend did not become healthy in 60 seconds')
 }
 
-async function stopBackend() {
-  if (currentMode === 'docker' && dockerManager) {
-    try {
-      await dockerManager.stopContainer()
-    } catch (err) {
-      console.error('[backend] docker stop error:', err)
-    }
-    currentMode = 'offline'
-    return
+async function stopBackend(): Promise<void> {
+  const child = backendProcess
+  if (dockerManager && (currentMode === 'docker' || ['starting-container', 'waiting-container-health'].includes(currentBootPhase.phase))) {
+    const result = await dockerManager.stopContainer()
+    if (!result.success) throw new Error(result.error ?? 'Could not stop Docker backend')
   }
-
-  if (!backendProcess) return
-  console.log('[backend] Stopping native...')
-  try {
-    if (process.platform === 'win32') {
-      spawn('taskkill', ['/pid', String(backendProcess.pid), '/f', '/t'])
-    } else {
-      backendProcess.kill('SIGTERM')
-      setTimeout(() => backendProcess?.kill('SIGKILL'), 3000)
-    }
-  } catch (err) {
-    console.error('[backend] Error stopping:', err)
-  }
-  backendProcess = null
   currentMode = 'offline'
+  if (child) {
+    // Detach state before exit, but keep the captured child until termination completes.
+    if (backendProcess === child) backendProcess = null
+    await terminateChild(child)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -507,12 +502,20 @@ if (!gotSingleInstanceLock) {
 
 app.whenReady().then(async () => {
   buildAppMenu()
-  dockerManager = new DockerManager(getResourcePath('models-at-home'))
+  try {
+    runtimeRoot = resolveRuntime(getResourcePath(), isDev)
+    workspaceRoot = process.env.MODELS_AT_HOME_ROOT ?? (isDev ? runtimeRoot : path.join(app.getPath('userData'), 'workspace'))
+    prepareWorkspace(runtimeRoot, workspaceRoot)
+    dockerManager = new DockerManager(runtimeRoot, getResourcePath(), workspaceRoot)
+  } catch (error) {
+    backendStartError = String(error)
+    emitBootPhase({ phase: 'failed', error: backendStartError })
+  }
   registerIpcHandlers()
 
   createWindow()
 
-  startBackend().catch((err) => {
+  if (runtimeRoot) startBackend().catch((err) => {
     console.error('[backend] Could not auto-start:', err)
   })
 
@@ -525,15 +528,14 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', async (e) => {
-  if (currentMode === 'docker' && dockerManager) {
-    e.preventDefault()
-    try { await dockerManager.stopContainer() } catch { /* ignore */ }
-    currentMode = 'offline'
-    app.quit()
-    return
-  }
-  await stopBackend()
+let quitting = false
+app.on('before-quit', (event) => {
+  if (quitting) return
+  event.preventDefault()
+  quitting = true
+  void (async () => {
+    await stopBackend()
+  })().catch(err => console.error('[backend] shutdown:', err)).finally(() => app.quit())
 })
 
 // ---------------------------------------------------------------------------
@@ -543,7 +545,7 @@ app.on('before-quit', async (e) => {
 function registerIpcHandlers() {
   ipcMain.handle('backend:status', async () => {
     try {
-      const res = await fetch(`http://127.0.0.1:${backendPort}/api/system/health`)
+      const res = await fetch(`http://127.0.0.1:${backendPort}/api/system/health`, { signal: AbortSignal.timeout(2000), headers: { 'X-Studio-Token': apiToken } })
       return {
         running: res.ok,
         port: backendPort,
@@ -563,9 +565,8 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('backend:restart', async () => {
-    await stopBackend()
     try {
-      await startBackend()
+      await restartBackend()
       return { success: true, port: backendPort, mode: currentMode }
     } catch (err) {
       return { success: false, error: String(err), port: backendPort, mode: currentMode }
@@ -573,6 +574,7 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('backend:port', () => backendPort)
+  ipcMain.handle('backend:token', () => apiToken)
 
   ipcMain.handle('backend:boot-phase', () => currentBootPhase)
 
@@ -586,8 +588,7 @@ function registerIpcHandlers() {
   ipcMain.handle('config:set', (_e, patch: Partial<AppConfig>) => saveConfig(patch))
   ipcMain.handle('config:set-backend-mode', async (_e, mode: BackendMode) => {
     const next = saveConfig({ backendMode: mode })
-    await stopBackend()
-    startBackend().catch((err) => console.error('[backend] Restart after mode change failed:', err))
+    void restartBackend().catch((err) => console.error('[backend] Restart after mode change failed:', err))
     return next
   })
 
@@ -602,11 +603,18 @@ function registerIpcHandlers() {
     dockerManager ? dockerManager.imageExists() : false,
   )
   ipcMain.handle('docker:start', async () => {
-    if (!dockerManager) return { success: false, error: 'Docker not initialized' }
-    const port = await findAvailablePort(8000)
-    return dockerManager.startContainer({ hostPort: port, gpu: loadConfig().dockerGpu })
+    saveConfig({ backendMode: 'docker' })
+    try {
+      await restartBackend()
+      return { success: true, hostPort: backendPort }
+    } catch (err) { return { success: false, error: String(err) } }
   })
-  ipcMain.handle('docker:stop', async () => dockerManager?.stopContainer())
+  ipcMain.handle('docker:stop', async () => {
+    try {
+      await stopBackend()
+      return { success: true }
+    } catch (err) { return { success: false, error: String(err) } }
+  })
   ipcMain.handle('docker:build', async () => {
     if (!dockerManager) return { success: false, error: 'Docker not initialized' }
     return dockerManager.buildImage((line) =>
@@ -625,7 +633,7 @@ function registerIpcHandlers() {
     temp: app.getPath('temp'),
   }))
 
-  ipcMain.handle('shell:openExternal', (_event, url: string) => shell.openExternal(url))
+  ipcMain.handle('shell:openExternal', (_event, url: string) => shell.openExternal(externalUrl(url)))
   ipcMain.handle('shell:showInFolder', (_event, p: string) => shell.showItemInFolder(p))
 
   ipcMain.handle('dialog:pickDirectory', async () => {

@@ -6,6 +6,7 @@ const BASE_IMAGE_NAME = 'models-at-home-base:latest'
 const IMAGE_NAME = 'models-at-home-studio:latest'
 const CONTAINER_NAME = 'mah-studio-backend'
 const CONTAINER_PORT = 8000
+const OWNER_LABEL = 'com.modelsathome.studio'
 
 export type BuildProgress = (line: string) => void
 
@@ -22,12 +23,14 @@ export class DockerManager {
   private hostPort: number | null = null
   private projectRoot: string
   private studioRoot: string
+  private workspaceRoot: string
 
-  constructor(projectRoot?: string) {
+  constructor(projectRoot?: string, studioRoot?: string, workspaceRoot?: string) {
     this.docker = new Docker()
     this.projectRoot =
       projectRoot ?? path.resolve(__dirname, '..', '..', 'models-at-home')
-    this.studioRoot = path.dirname(this.projectRoot)
+    this.studioRoot = studioRoot ?? path.dirname(this.projectRoot)
+    this.workspaceRoot = workspaceRoot ?? this.projectRoot
   }
 
   // -----------------------------------------------------------------------
@@ -73,7 +76,9 @@ export class DockerManager {
       })
 
       if (containers.length > 0) {
-        const c = containers[0]
+        const c = containers.find(c => c.Names?.includes(`/${CONTAINER_NAME}`))
+        if (!c) return { running: false }
+        if (c.Labels?.[OWNER_LABEL] !== '1') return { running: false, error: 'Container name is already used by an unmanaged container' }
         this.containerId = c.Id
         const mapped = c.Ports?.find((p) => p.PrivatePort === CONTAINER_PORT)
         const port = mapped?.PublicPort ?? this.hostPort ?? undefined
@@ -119,7 +124,7 @@ export class DockerManager {
       )
 
       await this.buildTaggedImage(
-        { context: this.studioRoot, src: ['backend'] },
+        { context: this.studioRoot, src: ['backend', 'examples', 'requirements-world-foundation.txt', 'requirements-world-local.txt'] },
         {
           t: IMAGE_NAME,
           dockerfile: 'backend/Dockerfile',
@@ -171,32 +176,26 @@ export class DockerManager {
   // -----------------------------------------------------------------------
 
   async ensureContainerRemoved(): Promise<void> {
-    try {
-      const containers = await this.docker.listContainers({
-        all: true,
-        filters: { name: [CONTAINER_NAME] },
-      })
-      for (const c of containers) {
-        const container = this.docker.getContainer(c.Id)
-        try {
-          if (c.State === 'running') await container.stop({ t: 5 })
-        } catch { /* ignore */ }
-        try {
-          await container.remove({ force: true })
-        } catch { /* ignore */ }
-      }
-    } catch { /* ignore */ }
+    const containers = await this.docker.listContainers({ all: true, filters: { name: [CONTAINER_NAME] } })
+    for (const c of containers) {
+      if (!c.Names?.includes(`/${CONTAINER_NAME}`)) continue
+      if (c.Labels?.[OWNER_LABEL] !== '1') throw new Error('Container name is already used by an unmanaged container; stop or rename it explicitly')
+      const container = this.docker.getContainer(c.Id)
+      if (c.State === 'running') await container.stop({ t: 5 })
+      await container.remove()
+    }
   }
 
   async startContainer(opts: {
     hostPort: number
     jupyterPort?: number
     gpu?: boolean
+    apiToken?: string
   }): Promise<{ success: boolean; hostPort?: number; error?: string }> {
     try {
       await this.ensureContainerRemoved()
-      for (const dir of ['datasets', 'out', '.runs', 'blueprints', 'models', 'configs', 'notebooks']) {
-        fs.mkdirSync(path.join(this.projectRoot, dir), { recursive: true })
+      for (const dir of ['datasets', 'out', '.runs', 'blueprints', 'models', 'configs', 'notebooks', 'study_materials']) {
+        fs.mkdirSync(path.join(this.workspaceRoot, dir), { recursive: true })
       }
 
       const deviceRequests = opts.gpu
@@ -206,6 +205,7 @@ export class DockerManager {
       const container = await this.docker.createContainer({
         Image: IMAGE_NAME,
         name: CONTAINER_NAME,
+        Labels: { [OWNER_LABEL]: '1' },
         Cmd: [
           'python',
           '-m',
@@ -219,20 +219,20 @@ export class DockerManager {
         ExposedPorts: { [`${CONTAINER_PORT}/tcp`]: {}, '8888/tcp': {} },
         HostConfig: {
           PortBindings: {
-            [`${CONTAINER_PORT}/tcp`]: [{ HostPort: String(opts.hostPort) }],
-            '8888/tcp': [{ HostPort: String(opts.jupyterPort ?? 8888) }],
+            [`${CONTAINER_PORT}/tcp`]: [{ HostIp: '127.0.0.1', HostPort: String(opts.hostPort) }],
+            '8888/tcp': [{ HostIp: '127.0.0.1', HostPort: String(opts.jupyterPort ?? 8888) }],
           },
           Binds: [
-            // Studio FastAPI package is NOT baked into the image (it is built
-            // from the models-at-home context); mount it like docker-compose does.
-            `${this.studioRoot}/backend:/app/backend`,
-            `${this.projectRoot}/datasets:/app/datasets`,
-            `${this.projectRoot}/out:/app/out`,
-            `${this.projectRoot}/.runs:/app/.runs`,
-            `${this.projectRoot}/blueprints:/app/blueprints`,
-            `${this.projectRoot}/models:/app/models`,
-            `${this.projectRoot}/configs:/app/configs`,
-            `${this.projectRoot}/notebooks:/app/notebooks`,
+            // Keep API source current while ML dependencies remain in the image.
+            `${this.studioRoot}/backend:/app/backend:ro`,
+            `${this.workspaceRoot}/datasets:/app/datasets`,
+            `${this.workspaceRoot}/out:/app/out`,
+            `${this.workspaceRoot}/.runs:/app/.runs`,
+            `${this.workspaceRoot}/blueprints:/app/blueprints`,
+            `${this.workspaceRoot}/models:/app/models`,
+            `${this.workspaceRoot}/configs:/app/configs`,
+            `${this.workspaceRoot}/notebooks:/app/notebooks`,
+            `${this.workspaceRoot}/study_materials:/app/study_materials:ro`,
           ],
           ShmSize: 8 * 1024 * 1024 * 1024,
           DeviceRequests: deviceRequests,
@@ -241,6 +241,10 @@ export class DockerManager {
         Env: [
           'PYTHONUNBUFFERED=1',
           'MODELS_AT_HOME_ROOT=/app',
+          ...['HF_TOKEN'].filter(name => process.env[name]).map(name => `${name}=${process.env[name]}`),
+          ...(process.env.MAH_DOCKER_WORLD_PYTHON ? [`MAH_WORLD_PYTHON=${process.env.MAH_DOCKER_WORLD_PYTHON}`] : []),
+          `MAH_API_TOKEN=${opts.apiToken ?? ''}`,
+          'JUPYTER_BIND_HOST=0.0.0.0',
           'MKL_THREADING_LAYER=GNU',
           'HOME=/tmp',
           'HF_HOME=/tmp/.cache/huggingface',
@@ -274,7 +278,7 @@ export class DockerManager {
 
   async waitForHealth(
     hostPort: number,
-    opts: { timeoutMs?: number; onTick?: (attempt: number) => void } = {},
+    opts: { timeoutMs?: number; apiToken?: string; onTick?: (attempt: number) => void } = {},
   ): Promise<boolean> {
     const timeoutMs = opts.timeoutMs ?? 120_000
     const start = Date.now()
@@ -285,6 +289,7 @@ export class DockerManager {
       try {
         const res = await fetch(
           `http://127.0.0.1:${hostPort}/api/system/health`,
+          { signal: AbortSignal.timeout(2000), headers: { 'X-Studio-Token': opts.apiToken ?? '' } },
         )
         if (res.ok) return true
       } catch { /* not ready */ }

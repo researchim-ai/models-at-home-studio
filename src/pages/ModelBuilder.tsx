@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -22,9 +23,12 @@ import {
   RefreshCw,
   ArrowUp,
   ArrowDown,
+  Play,
 } from 'lucide-react'
 import { api } from '@/api/client'
+import { isSequence, connectSequence, syncBlueprintDimensions } from '@/lib/blueprint'
 import { toast } from 'sonner'
+import { useTrainingStore } from '@/stores/trainingStore'
 
 interface BlockDef {
   type: string
@@ -34,7 +38,7 @@ interface BlockDef {
 interface BlockInstance {
   id: string
   type: string
-  params: Record<string, number | string | boolean>
+  params: Record<string, unknown>
   inputs: string[]
 }
 
@@ -72,17 +76,17 @@ function getIconFor(type: string) {
   return ICON_BY_TYPE[type] ?? { icon: Cpu, color: 'bg-muted text-muted-foreground' }
 }
 
-function getDefaultParams(type: string, hiddenSize: number, vocabSize: number): Record<string, number | string | boolean> {
-  switch (type) {
+function getDefaultParams(type: string, hiddenSize: number, vocabSize: number, maxPositions: number): Record<string, number | string | boolean> {
+  switch (type.replace(/^liger_/, '')) {
     case 'token_embedding': return { vocab_size: vocabSize, hidden_size: hiddenSize }
-    case 'positional_embedding': return { max_position_embeddings: 2048, hidden_size: hiddenSize }
+    case 'positional_embedding': return { max_position_embeddings: maxPositions, hidden_size: hiddenSize }
     case 'attention': return { num_heads: 8, dropout: 0 }
-    case 'causal_self_attention': return { num_heads: 8, head_dim: 64, use_rope: true }
+    case 'causal_self_attention': return { num_heads: 8, use_rope: true }
     case 'mlp': return { intermediate_size: hiddenSize * 4, activation: 'gelu' }
     case 'swiglu': return { intermediate_size: hiddenSize * 4 }
     case 'rmsnorm': return { eps: 1e-6 }
     case 'layernorm': return { eps: 1e-5 }
-    case 'moe': return { num_experts: 8, top_k: 2, intermediate_size: hiddenSize * 4 }
+    case 'moe': return { num_experts: 8, num_select: 2, expert_type: 'swiglu' }
     case 'llama_block': return { num_heads: 8, intermediate_size: hiddenSize * 4 }
     case 'linear': return { in_features: hiddenSize, out_features: hiddenSize, bias: false }
     case 'dropout': return { p: 0.1 }
@@ -92,6 +96,7 @@ function getDefaultParams(type: string, hiddenSize: number, vocabSize: number): 
 
 export function ModelBuilder() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const [blocks, setBlocks] = useState<BlockInstance[]>([])
   const [blueprintName, setBlueprintName] = useState('my_model')
   const [hiddenSize, setHiddenSize] = useState(512)
@@ -103,6 +108,9 @@ export function ModelBuilder() {
   const [saved, setSaved] = useState<SavedBlueprint[]>([])
   const [selectedBlock, setSelectedBlock] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [jsonDraft, setJsonDraft] = useState<string | null>(null)
+  const [jsonError, setJsonError] = useState<string | null>(null)
+  const [blueprintExtras, setBlueprintExtras] = useState<Record<string, unknown>>({})
 
   const loadBlocks = useCallback(async () => {
     try {
@@ -126,27 +134,34 @@ export function ModelBuilder() {
   }, [loadBlocks, loadSaved])
 
   const addBlock = useCallback((type: string) => {
-    const id = `${type}_${Date.now().toString(36).slice(-4)}`
+    const id = `${type}_${crypto.randomUUID()}`
     setBlocks((prev) => {
       const previousId = prev.length > 0 ? prev[prev.length - 1].id : null
       return [...prev, {
         id,
         type,
-        params: getDefaultParams(type, hiddenSize, vocabSize),
+        params: getDefaultParams(type, hiddenSize, vocabSize, maxPositions),
         inputs: previousId ? [previousId] : [],
       }]
     })
-  }, [hiddenSize, vocabSize])
+  }, [hiddenSize, vocabSize, maxPositions])
 
   const removeBlock = (id: string) => {
-    setBlocks((prev) => prev.filter((b) => b.id !== id).map((b) => ({
-      ...b,
-      inputs: b.inputs.filter((i) => i !== id),
-    })))
+    if (!isSequence(blocks) && blocks.some(b => b.inputs.includes(id))) {
+      toast.error('Блок используется графом. Сначала измени связи в blueprint JSON.')
+      return
+    }
+    setBlocks(prev => isSequence(prev)
+      ? connectSequence(prev.filter(b => b.id !== id))
+      : prev.filter(b => b.id !== id))
     if (selectedBlock === id) setSelectedBlock(null)
   }
 
   const moveBlock = (id: string, dir: -1 | 1) => {
+    if (!isSequence(blocks)) {
+      toast.error('Перестановка доступна для последовательной архитектуры; граф сохранён без изменений.')
+      return
+    }
     setBlocks((prev) => {
       const idx = prev.findIndex((b) => b.id === id)
       if (idx === -1) return prev
@@ -154,7 +169,7 @@ export function ModelBuilder() {
       if (next < 0 || next >= prev.length) return prev
       const copy = [...prev]
       ;[copy[idx], copy[next]] = [copy[next], copy[idx]]
-      return copy
+      return connectSequence(copy)
     })
   }
 
@@ -165,6 +180,7 @@ export function ModelBuilder() {
   }
 
   const blueprint = {
+    ...blueprintExtras,
     model_type: 'homellm_blueprint',
     vocab_size: vocabSize,
     hidden_size: hiddenSize,
@@ -176,7 +192,7 @@ export function ModelBuilder() {
       params: b.params,
       inputs: b.inputs,
     })),
-    training: {
+    training: blueprintExtras.training ?? {
       optimizer: 'adamw',
       lr: 0.001,
       weight_decay: 0.01,
@@ -214,6 +230,23 @@ export function ModelBuilder() {
     }
   }
 
+  const handleTrain = async () => {
+    setSaving(true)
+    try {
+      const result = await api.saveBlueprint(blueprintName, blueprint)
+      const store = useTrainingStore.getState()
+      store.setStage('pretrain')
+      store.updateConfig({ model_type: 'blueprint', model_blueprint: result.path,
+        model_blueprint_spec: blueprint, hidden_size: hiddenSize, vocab_size: vocabSize,
+        seq_len: maxPositions, training_backend: 'models-at-home', tuning_method: 'full', use_lora: false,
+        base_model_path: '', model_path: '' })
+      navigate('/')
+      toast.success('Схема передана в Training Studio. Выбери токенизатор и данные для обучения.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+    } finally { setSaving(false) }
+  }
+
   const handleLoad = async (name: string) => {
     try {
       const data = await api.getBlueprint(name)
@@ -223,6 +256,7 @@ export function ModelBuilder() {
       setVocabSize(bp.vocab_size ?? 50257)
       setMaxPositions(bp.max_position_embeddings ?? 2048)
       setAutoProject(bp.auto_project ?? true)
+      setBlueprintExtras({ dtype: bp.dtype, training: bp.training })
       setBlocks((bp.blocks ?? []).map((b: any) => ({
         id: b.id,
         type: b.type,
@@ -232,6 +266,24 @@ export function ModelBuilder() {
       toast.success(`Загружен blueprint "${name}"`)
     } catch {
       toast.error('Не удалось загрузить blueprint')
+    }
+  }
+
+  const applyJson = async () => {
+    if (jsonDraft === null) return
+    setJsonError(null)
+    try {
+      const parsed = JSON.parse(jsonDraft)
+      const { blueprint: value } = await api.validateBlueprint(parsed)
+      setHiddenSize(value.hidden_size as number)
+      setVocabSize(value.vocab_size as number)
+      setMaxPositions(value.max_position_embeddings as number)
+      setAutoProject(value.auto_project as boolean)
+      setBlueprintExtras({ dtype: value.dtype, training: value.training })
+      setBlocks(value.blocks as BlockInstance[])
+      setJsonDraft(null)
+    } catch (error) {
+      setJsonError(error instanceof Error ? error.message : String(error))
     }
   }
 
@@ -246,12 +298,26 @@ export function ModelBuilder() {
     }
   }
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(JSON.stringify(blueprint, null, 2))
-    toast.success('Blueprint скопирован')
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(blueprint, null, 2))
+      toast.success('Blueprint скопирован')
+    } catch {
+      toast.error('Не удалось скопировать blueprint в буфер обмена')
+    }
   }
 
   const currentBlock = blocks.find((b) => b.id === selectedBlock)
+
+  const resize = (changes: Partial<{ hidden: number; vocab: number; positions: number }>) => {
+    const before = { hidden: hiddenSize, vocab: vocabSize, positions: maxPositions }
+    const after = { ...before, ...changes }
+    if (Object.values(after).some(value => !Number.isInteger(value) || value <= 0)) return
+    setBlocks(current => syncBlueprintDimensions(current, before, after))
+    setHiddenSize(after.hidden)
+    setVocabSize(after.vocab)
+    setMaxPositions(after.positions)
+  }
 
   return (
     <div className="flex h-full">
@@ -293,21 +359,21 @@ export function ModelBuilder() {
               <Input
                 type="number"
                 value={hiddenSize}
-                onChange={(e) => setHiddenSize(parseInt(e.target.value) || 512)}
+                onChange={(e) => resize({ hidden: Number(e.target.value) })}
                 className="h-8"
               />
               <Label className="text-xs">Vocab Size</Label>
               <Input
                 type="number"
                 value={vocabSize}
-                onChange={(e) => setVocabSize(parseInt(e.target.value) || 50257)}
+                onChange={(e) => resize({ vocab: Number(e.target.value) })}
                 className="h-8"
               />
               <Label className="text-xs">Max Positions</Label>
               <Input
                 type="number"
                 value={maxPositions}
-                onChange={(e) => setMaxPositions(parseInt(e.target.value) || 2048)}
+                onChange={(e) => resize({ positions: Number(e.target.value) })}
                 className="h-8"
               />
             </div>
@@ -330,11 +396,18 @@ export function ModelBuilder() {
             <Badge variant="outline">{blocks.length} blocks</Badge>
           </div>
           <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setJsonDraft(JSON.stringify(blueprint, null, 2)); setJsonError(null) }}>
+              Edit JSON
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleTrain} disabled={saving || !blocks.length || jsonDraft !== null}>
+              <Play className="h-3.5 w-3.5" />
+              {t('builder.train')}
+            </Button>
             <Button variant="outline" size="sm" onClick={handleCopy}>
               <Copy className="h-3.5 w-3.5" />
               Copy JSON
             </Button>
-            <Button size="sm" onClick={handleSave} disabled={saving}>
+            <Button size="sm" onClick={handleSave} disabled={saving || jsonDraft !== null}>
               <Save className="h-3.5 w-3.5" />
               {saving ? 'Saving...' : t('builder.save')}
             </Button>
@@ -342,6 +415,16 @@ export function ModelBuilder() {
         </div>
 
         <ScrollArea className="flex-1 p-6">
+          {jsonDraft !== null && <div className="mb-4 space-y-2">
+            <Label htmlFor="blueprint-json">Blueprint JSON</Label>
+            <textarea id="blueprint-json" value={jsonDraft} onChange={event => setJsonDraft(event.target.value)}
+              className="w-full min-h-80 rounded border border-border bg-muted/30 p-3 font-mono text-xs" />
+            {jsonError && <p role="alert" className="text-xs text-destructive">{jsonError}</p>}
+            <div className="flex gap-2">
+              <Button size="sm" onClick={applyJson}>Apply JSON</Button>
+              <Button size="sm" variant="outline" onClick={() => setJsonDraft(null)}>Cancel</Button>
+            </div>
+          </div>}
           {blocks.length === 0 ? (
             <div className="flex h-96 items-center justify-center rounded-xl border-2 border-dashed border-border">
               <div className="text-center text-muted-foreground">
@@ -447,7 +530,10 @@ export function ModelBuilder() {
               {Object.entries(currentBlock.params).map(([k, v]) => (
                 <div key={k} className="space-y-1">
                   <Label className="text-[10px]">{k}</Label>
-                  <Input
+                  {typeof v === 'boolean' ? <input
+                    type="checkbox" checked={v} aria-label={k}
+                    onChange={e => updateParam(currentBlock.id, k, e.target.checked)}
+                  /> : typeof v === 'object' ? <pre className="text-xs whitespace-pre-wrap">{JSON.stringify(v, null, 2)}</pre> : <Input
                     value={String(v)}
                     onChange={(e) => {
                       const val = e.target.value
@@ -455,7 +541,7 @@ export function ModelBuilder() {
                       updateParam(currentBlock.id, k, parsed)
                     }}
                     className="h-7 text-xs"
-                  />
+                  />}
                 </div>
               ))}
             </div>

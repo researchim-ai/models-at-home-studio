@@ -12,6 +12,7 @@ interface TrainingState {
   setActiveRunId: (id: string | null) => void
   setRuns: (runs: TrainingRun[]) => void
   pushMetrics: (m: MetricsSnapshot) => void
+  hydrateMetrics: (runId: string, history: MetricsSnapshot[], latest: MetricsSnapshot | null) => void
   clearMetrics: () => void
   updateConfig: (partial: Partial<TrainingConfig>) => void
   setStage: (stage: TrainingStage) => void
@@ -142,15 +143,35 @@ export const useTrainingStore = create<TrainingState>((set) => ({
   config: { ...defaultConfig },
   selectedChatModel: null,
 
-  setActiveRunId: (activeRunId) => set({ activeRunId }),
+  setActiveRunId: (activeRunId) => set(state => activeRunId === state.activeRunId
+    ? state
+    : { activeRunId, currentMetrics: null, metricsHistory: [] }),
   setSelectedChatModel: (selectedChatModel) => set({ selectedChatModel }),
   setRuns: (runs) => set({ runs }),
 
-  pushMetrics: (m) =>
-    set((s) => ({
-      currentMetrics: m,
-      metricsHistory: [...s.metricsHistory, m].slice(-500),
-    })),
+  pushMetrics: (m) => set(state => {
+    const points = new Map(state.metricsHistory.map(point => [point.step, point]))
+    const previous = points.get(m.step)
+    if (!previous || m.timestamp >= previous.timestamp) points.set(m.step, m)
+    const current = state.currentMetrics
+    const newest = !current || m.step > current.step || (m.step === current.step && m.timestamp >= current.timestamp)
+    return { currentMetrics: newest ? m : current,
+      metricsHistory: [...points.values()].sort((a, b) => a.step - b.step).slice(-500) }
+  }),
+
+  hydrateMetrics: (runId, history, latest) => set(state => {
+    if (state.activeRunId !== runId) return state
+    const points = new Map(history.map(point => [point.step, point]))
+    if (latest) points.set(latest.step, latest)
+    for (const point of state.metricsHistory) {
+      const previous = points.get(point.step)
+      if (!previous || point.timestamp >= previous.timestamp) points.set(point.step, point)
+    }
+    const merged = [...points.values()].sort((a, b) => a.step - b.step).slice(-500)
+    const candidates = [state.currentMetrics, latest, merged.at(-1)].filter((point): point is MetricsSnapshot => !!point)
+    const current = candidates.sort((a, b) => b.step - a.step || b.timestamp - a.timestamp)[0] ?? null
+    return { metricsHistory: merged, currentMetrics: current }
+  }),
 
   clearMetrics: () => set({ currentMetrics: null, metricsHistory: [] }),
 
@@ -160,7 +181,7 @@ export const useTrainingStore = create<TrainingState>((set) => ({
   setStage: (stage) =>
     set((s) => {
       const preset = stagePresets[stage]
-      const next = { ...s.config, ...preset }
+      const next = { ...s.config, ...preset, model_type: stage === 'pretrain' ? 'home' : 'hf' }
       return { config: next }
     }),
 

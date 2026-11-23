@@ -25,7 +25,7 @@ interface Template {
 export function Notebooks() {
   const { t } = useTranslation()
   const [jupyterUrl, setJupyterUrl] = useState('http://localhost:8888')
-  const [token, setToken] = useState('mah-local')
+  const [token, setToken] = useState('')
   const [healthy, setHealthy] = useState<boolean | null>(null)
   const [showEmbed, setShowEmbed] = useState(false)
   const [notebooks, setNotebooks] = useState<Notebook[]>([])

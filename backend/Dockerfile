@@ -4,14 +4,15 @@ FROM models-at-home-base:latest
 
 ENV MODELS_AT_HOME_ROOT=/app
 
-# Install FastAPI + uvicorn on top of existing ML dependencies
-RUN uv pip install --python /opt/venv/bin/python \
-    "fastapi>=0.115.0" \
-    "uvicorn[standard]>=0.34.0" \
-    "websockets>=14.0"
+# Install the API and supervisor dependencies used by this source tree.
+COPY backend/requirements.txt /tmp/mah-requirements.txt
+RUN uv pip install --python /opt/venv/bin/python -r /tmp/mah-requirements.txt
 
 # Copy backend API code
 COPY backend/ /app/backend/
+COPY examples/ /app/examples/
+COPY requirements-world-foundation.txt /app/requirements-world-foundation.txt
+COPY requirements-world-local.txt /app/requirements-world-local.txt
 
 EXPOSE 8000 8888
 

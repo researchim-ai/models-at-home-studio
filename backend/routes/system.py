@@ -19,7 +19,7 @@ async def health():
 
 
 @router.get("/gpu")
-async def gpu_info():
+def gpu_info():
     gpus = []
     try:
         result = subprocess.run(
@@ -46,7 +46,7 @@ async def gpu_info():
 
 
 @router.get("/configs")
-async def list_configs():
+def list_configs():
     accelerate = []
     deepspeed = []
 

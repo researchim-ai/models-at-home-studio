@@ -7,6 +7,8 @@ import { useSettingsStore } from '@/stores/settingsStore'
 const routeTitles: Record<string, string> = {
   '/': 'nav.training',
   '/vlm': 'nav.vlm',
+  '/world-models': 'nav.worldModels',
+  '/vla': 'nav.vla',
   '/builder': 'nav.builder',
   '/study': 'nav.study',
   '/notebooks': 'nav.notebooks',

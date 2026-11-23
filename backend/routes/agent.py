@@ -1,6 +1,7 @@
 """Agent Studio endpoints: llama-server management, agent chat, sessions."""
 from __future__ import annotations
 
+import threading
 import json
 import re
 import urllib.request
@@ -12,9 +13,10 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from backend.paths import get_project_root
+from backend.paths import get_project_root, safe_id, atomic_json
 
 router = APIRouter()
+_model_lock = threading.Lock()
 
 PROJECT_ROOT = get_project_root(Path(__file__).parent.parent.parent / "models-at-home")
 SESSIONS_DIR = PROJECT_ROOT / ".runs" / "agent_sessions"
@@ -246,55 +248,57 @@ class ChatRequest(BaseModel):
 
 
 @router.post("/start-server")
-async def start_server(req: ServerStartRequest):
+def start_server(req: ServerStartRequest):
     """Start llama-server with specified model."""
-    global _server_backend, _agent_temperature, _server_model_path, _server_ctx
-    try:
-        from homellm.app.llama_server_backend import LlamaServerBackend
-        from homellm.app.hf_gguf import download_gguf_to_models_dir
+    with _model_lock:
+        global _server_backend, _agent_temperature, _server_model_path, _server_ctx
+        try:
+            from homellm.app.llama_server_backend import LlamaServerBackend
+            from homellm.app.hf_gguf import download_gguf_to_models_dir
 
-        models_dir = PROJECT_ROOT / "models"
-        model_path = download_gguf_to_models_dir(
-            models_dir=models_dir,
-            repo_id=req.model_repo,
-            quant=req.quant,
-        )
+            models_dir = PROJECT_ROOT / "models"
+            model_path = download_gguf_to_models_dir(
+                models_dir=models_dir,
+                repo_id=req.model_repo,
+                quant=req.quant,
+            )
 
+            if _server_backend:
+                try:
+                    _server_backend.stop()
+                except Exception:
+                    pass
+
+            _server_backend = LlamaServerBackend(
+                model_path=str(model_path),
+                n_ctx=req.ctx_size,
+                n_gpu_layers=req.gpu_layers,
+            )
+            _agent_temperature = req.temperature
+            _server_model_path = str(model_path)
+            _server_ctx = int(req.ctx_size)
+            return {"success": True, "model_path": str(model_path)}
+        except Exception as e:
+            raise HTTPException(500, str(e))
+
+
+@router.post("/stop-server")
+def stop_server():
+    """Stop llama-server."""
+    with _model_lock:
+        global _server_backend, _server_model_path
         if _server_backend:
             try:
                 _server_backend.stop()
             except Exception:
                 pass
-
-        _server_backend = LlamaServerBackend(
-            model_path=str(model_path),
-            n_ctx=req.ctx_size,
-            n_gpu_layers=req.gpu_layers,
-        )
-        _agent_temperature = req.temperature
-        _server_model_path = str(model_path)
-        _server_ctx = int(req.ctx_size)
-        return {"success": True, "model_path": str(model_path)}
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@router.post("/stop-server")
-async def stop_server():
-    """Stop llama-server."""
-    global _server_backend, _server_model_path
-    if _server_backend:
-        try:
-            _server_backend.stop()
-        except Exception:
-            pass
-        _server_backend = None
-        _server_model_path = None
-    return {"success": True}
+            _server_backend = None
+            _server_model_path = None
+        return {"success": True}
 
 
 @router.get("/server-status")
-async def server_status():
+def server_status():
     """Check llama-server status."""
     if _server_backend is None:
         return {"running": False}
@@ -384,7 +388,7 @@ def _normalize_session(data: dict, file_id: str) -> dict:
             content = "" if content is None else json.dumps(content, ensure_ascii=False)
         messages.append({"role": str(m.get("role", "assistant")), "content": content})
     return {
-        "id": sid,
+        "id": file_id,
         "name": name,
         "messages": messages,
         "created_at": data.get("created_at") or data.get("updated_at"),
@@ -392,7 +396,7 @@ def _normalize_session(data: dict, file_id: str) -> dict:
 
 
 @router.get("/sessions")
-async def list_sessions():
+def list_sessions():
     """List all agent sessions, newest/most-recently-active first.
 
     Sorted by file mtime descending so that freshly created or freshly used
@@ -411,7 +415,7 @@ async def list_sessions():
 
 
 @router.post("/sessions")
-async def create_session():
+def create_session():
     """Create a new agent session."""
     session_id = uuid.uuid4().hex[:12]
     session = {
@@ -420,20 +424,21 @@ async def create_session():
         "messages": [],
         "created_at": datetime.now().isoformat(),
     }
-    (SESSIONS_DIR / f"{session_id}.json").write_text(json.dumps(session, indent=2))
+    atomic_json(safe_id(SESSIONS_DIR, session_id).with_suffix(".json"), session)
     return session
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_session(session_id: str):
+def delete_session(session_id: str):
     """Delete an agent session."""
-    session_file = SESSIONS_DIR / f"{session_id}.json"
-    session_file.unlink(missing_ok=True)
+    session_file = safe_id(SESSIONS_DIR, session_id).with_suffix(".json")
+    with _model_lock:
+        session_file.unlink(missing_ok=True)
     return {"success": True}
 
 
 @router.get("/tools")
-async def agent_tools():
+def agent_tools():
     """Return the real tool specs/groups the agent can call."""
     try:
         from homellm.app.agent_tools import get_tool_groups, get_tool_specs
@@ -444,7 +449,7 @@ async def agent_tools():
 
 
 @router.get("/capabilities")
-async def agent_capabilities():
+def agent_capabilities():
     """Return the agent training capabilities overview."""
     try:
         from homellm.app.agent_tools import list_training_capabilities
@@ -455,7 +460,7 @@ async def agent_capabilities():
 
 
 @router.get("/runs")
-async def agent_runs(status: str = "all"):
+def agent_runs(status: str = "all"):
     """List agent-initiated (and other) training runs with live status."""
     try:
         from homellm.app.agent_tools import list_runs
@@ -466,7 +471,7 @@ async def agent_runs(status: str = "all"):
 
 
 @router.post("/runs/{run_id}/stop")
-async def agent_stop_run(run_id: str):
+def agent_stop_run(run_id: str):
     """Stop a run started by the agent."""
     try:
         from homellm.app.agent_tools import stop_run
@@ -479,78 +484,79 @@ async def agent_stop_run(run_id: str):
 
 
 @router.post("/chat")
-async def agent_chat(req: ChatRequest):
+def agent_chat(req: ChatRequest):
     """Chat with the agent. Returns SSE stream."""
     if _server_backend is None:
         raise HTTPException(400, "Agent server is not running")
 
-    session_file = SESSIONS_DIR / f"{req.session_id}.json"
+    session_file = safe_id(SESSIONS_DIR, req.session_id).with_suffix(".json")
     if not session_file.exists():
         raise HTTPException(404, "Session not found")
 
-    session = json.loads(session_file.read_text())
-    session["messages"].append({"role": "user", "content": req.message})
-
     return StreamingResponse(
-        _run_agent_stream(session, session_file),
+        _run_agent_stream(req, session_file),
         media_type="text/event-stream",
     )
 
 
-async def _run_agent_stream(session: dict, session_file: Path):
+def _run_agent_stream(req: ChatRequest, session_file: Path):
     """Run agent turn with streaming response."""
-    try:
-        from homellm.app.agent_runtime import run_agent_turn
+    with _model_lock:
+        try:
+            session = _normalize_session(json.loads(session_file.read_text()), session_file.stem)
+            session["messages"].append({"role": "user", "content": req.message})
+            atomic_json(session_file, session)
+            from homellm.app.agent_runtime import run_agent_turn
 
-        text, trace = run_agent_turn(
-            backend=_AgentBackend(_server_backend),
-            conversation=session["messages"],
-            max_steps=6,
-            max_tokens=_recommended_output_tokens(_server_ctx),
-            temperature=_agent_temperature,
-            top_p=0.95,
-            top_k=40,
-        )
+            text, trace = run_agent_turn(
+                backend=_AgentBackend(_server_backend),
+                conversation=session["messages"],
+                max_steps=6,
+                max_tokens=_recommended_output_tokens(_server_ctx),
+                temperature=_agent_temperature,
+                top_p=0.95,
+                top_k=40,
+            )
 
-        # If the strict parser inside homellm failed, salvage the model's real
-        # answer from the last raw response instead of returning the stub error.
-        parse_failed = any(
-            isinstance(s, dict)
-            and isinstance(s.get("parsed"), dict)
-            and s["parsed"].get("parse_error")
-            for s in (trace or [])
-        )
-        if parse_failed and trace:
-            salvaged = _salvage_agent_text(str(trace[-1].get("raw_response", "")))
-            if salvaged:
-                text = salvaged
+            # If the strict parser inside homellm failed, salvage the model's real
+            # answer from the last raw response instead of returning the stub error.
+            parse_failed = any(
+                isinstance(s, dict)
+                and isinstance(s.get("parsed"), dict)
+                and s["parsed"].get("parse_error")
+                for s in (trace or [])
+            )
+            if parse_failed and trace:
+                salvaged = _salvage_agent_text(str(trace[-1].get("raw_response", "")))
+                if salvaged:
+                    text = salvaged
 
-        for item in trace or []:
-            tool_name = item.get("tool") or item.get("name")
-            if tool_name:
-                yield f"data: {json.dumps({'type': 'tool_call', 'tool': tool_name, 'args': item.get('arguments', {})})}\n\n"
-            for tool_result in item.get("tool_results", []) or []:
-                tool_name = tool_result.get("tool") or tool_result.get("name")
+            session["messages"].append({"role": "assistant", "content": text})
+
+            # Auto-name the chat after the first user turn using the model itself,
+            # so the session tab is understandable instead of "Session ab12cd".
+            user_messages = [m for m in session["messages"] if m.get("role") == "user"]
+            if len(user_messages) == 1 and _is_default_name(session.get("name", "")):
+                title = _generate_session_title(user_messages[0].get("content", ""))
+                session["name"] = title
+
+            atomic_json(session_file, session)
+
+            for item in trace or []:
+                tool_name = item.get("tool") or item.get("name")
                 if tool_name:
-                    yield f"data: {json.dumps({'type': 'tool_call', 'tool': tool_name, 'args': tool_result.get('arguments', {})})}\n\n"
+                    yield f"data: {json.dumps({'type': 'tool_call', 'tool': tool_name, 'args': item.get('arguments', {})})}\n\n"
+                for tool_result in item.get("tool_results", []) or []:
+                    tool_name = tool_result.get("tool") or tool_result.get("name")
+                    if tool_name:
+                        yield f"data: {json.dumps({'type': 'tool_call', 'tool': tool_name, 'args': tool_result.get('arguments', {})})}\n\n"
 
-        for i in range(0, len(text), 20):
-            chunk = text[i:i+20]
-            yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
+            for i in range(0, len(text), 20):
+                chunk = text[i:i+20]
+                yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
 
-        session["messages"].append({"role": "assistant", "content": text})
 
-        # Auto-name the chat after the first user turn using the model itself,
-        # so the session tab is understandable instead of "Session ab12cd".
-        user_messages = [m for m in session["messages"] if m.get("role") == "user"]
-        if len(user_messages) == 1 and _is_default_name(session.get("name", "")):
-            title = _generate_session_title(user_messages[0].get("content", ""))
-            session["name"] = title
-            yield f"data: {json.dumps({'type': 'session_named', 'id': session.get('id'), 'name': title})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
 
-        session_file.write_text(json.dumps(session, indent=2))
-
-    except Exception as e:
-        yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
-
-    yield "data: [DONE]\n\n"
+        yield "data: [DONE]\n\n"
