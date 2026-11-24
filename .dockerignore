@@ -19,3 +19,13 @@ build
 .gitignore
 **/*.log
 .DS_Store
+
+# Local interpreters, caches and secrets are not image inputs
+**/.venv*
+**/venv
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/.env
+**/.env.*
+**/unsloth_compiled_cache

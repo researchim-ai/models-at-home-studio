@@ -1,29 +1,90 @@
+# JavaScript dependencies and generated application bundles
 node_modules/
 dist/
 dist-electron/
 release/
-*.log
-.env
-.env.local
+coverage/
+*.tsbuildinfo
 
-# Python
+# Python environments and generated caches
+.venv*/
+venv/
 __pycache__/
 *.pyc
 *.pyo
-.venv/
-.venv-vlm/
-unsloth_compiled_cache/
-venv/
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+*.egg-info/
+.eggs/
+.ipynb_checkpoints/
 
-# IDE
+# ML caches, experiment state and exported checkpoints
+.cache/
+.runs/
+wandb/
+mlruns/
+lightning_logs/
+*unsloth_compiled*
+checkpoint-[0-9]*/
+checkpoint_step[0-9]*/
+final_model/
+*.safetensors
+*.gguf
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.h5
+*.hdf5
+pytorch_model*.bin
+adapter_model*.bin
+optimizer*.bin
+training_state*.bin
+
+# User data at the workspace root; examples/ and source packages stay visible
+/models/
+/datasets/
+/out/
+/outputs/
+/checkpoints/
+/logs/
+/tmp/
+
+# User data beside the bundled ML runtime; keep homellm/ and its dependencies
+/models-at-home/models/
+/models-at-home/datasets/
+/models-at-home/out/
+/models-at-home/outputs/
+/models-at-home/checkpoints/
+/models-at-home/runs/
+/models-at-home/logs/
+
+# Installers copied outside release/
+*.AppImage
+*.deb
+*.rpm
+*.dmg
+*.msi
+*.exe
+*.blockmap
+
+# Local environment files; sanitized example configurations may be committed
+*.log
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.template
+!.env.sample
+
+# Editors and operating system metadata
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# OS
 .DS_Store
 Thumbs.db
-
-# Build artifacts
-*.tsbuildinfo

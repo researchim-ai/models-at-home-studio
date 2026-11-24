@@ -13,6 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--algorithm',choices=['sft','grpo','dr_grpo','dapo','ngu'],default='sft')
+    parser.add_argument('--precision',choices=['no','bf16','fp16'])
+    parser.add_argument('--initial-policy')
+    parser.add_argument('--sft-warmup',type=int,default=0,help='Train a demonstration SFT policy first, then run NGU from that export')
     parser.add_argument('--domain', choices=['robotics', 'simulation', 'desktop'], default='robotics')
     parser.add_argument('--action-type', choices=['continuous', 'discrete', 'hybrid'], default='continuous')
     parser.add_argument('--model-path')
@@ -62,13 +66,13 @@ def main():
                          'actions': [action] * (1 if index == 0 else 2)})
         data = root / 'data.jsonl'; data.write_text('\n'.join(json.dumps(row) for row in rows))
         validation = root / 'val.jsonl'; validation.write_text('\n'.join(json.dumps(row) for row in rows[:4]))
-        settings = {'architecture': 'vlm_action' if args.model_path else 'native_vla',
+        settings = {'training_algorithm':args.algorithm,'initial_policy_path':args.initial_policy or '', 'architecture': 'vlm_action' if args.model_path else 'native_vla',
             'training_backend': args.backend, 'model_path': args.model_path or '', 'dataset_path': str(data), 'val_data_path': str(validation),
             'domain': args.domain, 'action_type': args.action_type, 'action_dim': 2, 'action_horizon': 2, 'state_dim': state_dim,
             'discrete_classes': classes if args.action_type == 'hybrid' else [],
             'batch_size': 2, 'max_steps': 3 if args.model_path else 12, 'save_every': 1,
-            'eval_every': 2, 'learning_rate': .0003 if args.model_path else .003,
-            'mixed_precision': 'bf16' if args.device == 'cuda' else 'no', 'gpu_ids': [args.gpu_id],
+            'eval_every': 2, 'learning_rate': .0003 if args.model_path or args.algorithm=='ngu' else .003,
+            'mixed_precision': args.precision or ('bf16' if args.device == 'cuda' else 'no'), 'gpu_ids': [args.gpu_id],
             'device': args.device, 'image_size': 32, 'vision_grid': 4, 'tuning_method': args.method if args.model_path else 'full',
             'lora_r': 2, 'lora_alpha': 4, 'seq_len': 512, 'min_pixels': 4096, 'max_pixels': 4096}
         def finished(client, run_id):
@@ -83,9 +87,16 @@ def main():
                 time.sleep(.2)
             raise AssertionError((directory / 'stderr.log').read_text()[-6000:])
         with TestClient(app) as client:
+            if args.sft_warmup:
+                warm={**settings,'training_algorithm':'sft','initial_policy_path':'','max_steps':args.sft_warmup,'save_every':args.sft_warmup,'eval_every':args.sft_warmup,'learning_rate':.001}
+                response=client.post('/api/vla/start',json=warm);assert response.status_code==200,response.text
+                value=finished(client,response.json()['run_id'])
+                settings['initial_policy_path']=str(Path(value['config']['output_dir'])/'final_model')
+                print('PASS SFT warm start policy before NGU',flush=True)
+            previous_runs=len(list((root / '.runs').glob('*/config.json')))
             response = client.post('/api/vla/preflight', json=settings)
             assert response.status_code == 200 and response.json()['ready'], response.text
-            assert not list((root / '.runs').glob('*/config.json'))
+            assert len(list((root / '.runs').glob('*/config.json')))==previous_runs
             print('PASS VLA preflight: schema, masks, normalization, image/processor, no training launched', flush=True)
             response = client.post('/api/vla/start', json=settings)
             assert response.status_code == 200, response.text
@@ -94,7 +105,10 @@ def main():
             assert all(math.isfinite(v) for v in stats['loss_history'])
             assert any(v > 0 for v in stats['grad_norm_history'])
             assert 'current_val_loss' in stats
-            if not args.model_path:
+            if args.algorithm!='sft':
+                assert len(stats['reward_history'])==settings['max_steps'] and all(math.isfinite(v) for v in stats['reward_history'])
+                assert stats['kl_divergence']>=0 and stats['training_algorithm']==args.algorithm
+            if not args.model_path and args.algorithm=='sft':
                 assert min(stats['loss_history'][-4:]) < stats['loss_history'][0] * .8, stats['loss_history']
             print('PASS real action loss, nonzero gradients, validation and learning', flush=True)
             response = client.post(f"/api/training/runs/{first['run_id']}/continue", json={'max_steps': settings['max_steps'] + 2})
@@ -119,7 +133,7 @@ def main():
             if args.verify_resume:
                 assert not args.model_path and args.device == 'cpu'
                 replay_request = client.post('/api/vla/start', json={**settings,
-                    'resume_from_checkpoint': str(Path(first['config']['output_dir']) / 'checkpoint-2')})
+                    'resume_from_checkpoint': str(Path(first['config']['output_dir']) / 'checkpoint-1')})
                 assert replay_request.status_code == 200, replay_request.text
                 replay = finished(client, replay_request.json()['run_id'])
                 baseline_weights = load_file(str(Path(first['config']['output_dir']) / 'final_model' / 'policy.safetensors'))

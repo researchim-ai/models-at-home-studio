@@ -14,6 +14,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 
 const initial = {
+  ngu_max_attempts:4, ngu_continue_probability:.9, ngu_max_refill_rounds:8, ngu_action_tolerance:.5,
+  training_algorithm:'sft', initial_policy_path:'', grpo_group_size:8, grpo_updates:2, grpo_action_std:.5, grpo_temperature:1., grpo_clip_epsilon:.2, grpo_clip_epsilon_high:.28, grpo_kl_beta:.01, grpo_sft_weight:0.,
   domain: 'robotics', architecture: 'native_vla', training_backend: 'transformers', action_type: 'continuous', model_path: '', dataset_path: '', val_data_path: '',
   action_dim: 7, action_horizon: 8, state_dim: 7, hidden_dim: 128, image_size: 64, vision_grid: 4, batch_size: 8,
   gradient_accumulation: 1, learning_rate: 0.0003, max_steps: 500, save_every: 100, eval_every: 20,
@@ -48,7 +50,7 @@ export function VLAStudio() {
   const metrics = useQuery({ queryKey: ['vla', 'metrics', selected], queryFn: () => api.runMetrics(selected!),
     enabled: !!selected, refetchInterval: 2000 })
   const logs = useRunLogs(selected)
-  const payload = { ...config, stage: 'vla_sft', experiment_name: name, gpu_ids: [gpuId] }
+  const payload = { ...config, stage: config.training_algorithm==='sft'?'vla_sft':'vla_grpo', experiment_name: name, gpu_ids: [gpuId] }
   const key = JSON.stringify(payload)
   const currentKey = useRef(key)
   currentKey.current = key
@@ -82,7 +84,7 @@ export function VLAStudio() {
     <Label htmlFor={`vla-${field}`} className="text-xs">{label}</Label>
     <Input id={`vla-${field}`} type="number" min={min} step={step} value={String(config[field])}
       onChange={event => {
-        const caps: Record<string, number> = { action_dim: config.action_type === 'discrete' ? 4096 : 256, state_dim: 1024, action_horizon: 256, image_size: 512, vision_grid: 8, batch_size: 128, gradient_accumulation: 128 }
+        const caps: Record<string, number> = { action_dim: config.action_type === 'discrete' ? 4096 : 256, state_dim: 1024, action_horizon: 256, image_size: 512, vision_grid: 8, batch_size: 128, gradient_accumulation: 128, grpo_group_size:64, grpo_updates:16, grpo_clip_epsilon:.5, grpo_clip_epsilon_high:1, grpo_kl_beta:1, grpo_action_std:5, grpo_temperature:5, grpo_sft_weight:10, ngu_max_attempts:64, ngu_continue_probability:1, ngu_max_refill_rounds:100, ngu_action_tolerance:10 }
         const value = Math.min(caps[field] ?? 1e9, Math.max(min, Number(event.target.value) || min))
         patch({ [field]: value, ...(field === 'action_dim' ? { action_names: [] } : {}) })
       }} />
@@ -97,6 +99,27 @@ export function VLAStudio() {
     <aside className="w-80 shrink-0 overflow-auto border-r border-border p-4 space-y-5">
       <div className="space-y-1"><h2 className="text-sm font-semibold flex items-center gap-2"><Bot className="h-4 w-4" />VLA Configuration</h2>
         <p className="text-xs text-muted-foreground">Изображение + инструкция + состояние → action chunk.</p></div>
+      <div className="space-y-2"><Label className="text-xs">Метод обучения</Label>
+        <Select aria-label="VLA algorithm" value={config.training_algorithm} onChange={event=>patch({training_algorithm:event.target.value})}
+          options={[{value:'sft',label:'SFT / Behavior cloning'},{value:'grpo',label:'GRPO'},{value:'dr_grpo',label:'Dr.GRPO'},{value:'dapo',label:'DAPO loss'},{value:'ngu',label:'Never Give Up (2026) + GRPO'}]}/>
+        <Label htmlFor="vla-initial-policy" className="text-xs">Начальная VLA policy (опционально)</Label>
+        <Input id="vla-initial-policy" placeholder="out/vla_sft_run/final_model" value={config.initial_policy_path} onChange={event=>patch({initial_policy_path:event.target.value})}/>
+        {config.training_algorithm==='ngu'&&<>
+          <p className="text-xs text-muted-foreground">NGU повторяет sampling сложных наблюдений до успеха и объединяет неудачные попытки в одну группу. Локальный синхронный режим с ограниченным бюджетом.</p>
+          {numberField('ngu_max_attempts','NGU: максимум раундов на наблюдение',1)}{numberField('ngu_continue_probability','NGU: вероятность продолжения',0,.05)}
+          {numberField('ngu_max_refill_rounds','NGU: дополнительные наблюдения на группу',0)}{numberField('ngu_action_tolerance','NGU: допустимый RMSE continuous (норм.)',.01,.05)}
+          <p className="text-xs text-muted-foreground">Успех: RMSE не выше порога и все категории совпали с демонстрацией. Это не проверка выполнения задачи в среде. Максимум {config.grpo_group_size*config.ngu_max_attempts} action chunks на наблюдение; время sampling может вырасти до {config.ngu_max_attempts}× без учёта пропущенных наблюдений.</p>
+        </>}
+        {config.training_algorithm!=='sft'&&<>
+          <p className="text-xs text-muted-foreground">Reward: близость sampled action chunks к демонстрациям. Успех в среде не измеряется. Для дообучения выберите SFT export с тем же контрактом действий.</p>
+          {numberField('grpo_group_size','Action chunks в группе',2)}{numberField('grpo_updates','Updates на группу',1)}
+          {numberField('grpo_action_std','Continuous std (нормализованные единицы)',.01,.05)}{numberField('grpo_temperature','Categorical temperature',.1,.1)}
+          {numberField('grpo_clip_epsilon','Ratio clip epsilon',.01,.01)}
+          {config.training_algorithm==='dapo'&&numberField('grpo_clip_epsilon_high','DAPO верхний clip',.01,.01)}
+          {numberField('grpo_kl_beta','KL к начальной policy (0 — отключить)',0,.01)}{numberField('grpo_sft_weight','Дополнительный вес SFT loss',0,.1)}
+          <p className="text-[11px] text-muted-foreground">KL использует зафиксированные выходы начальной policy на наблюдениях датасета, без второй копии VLM на GPU. Их CPU bank сохраняется в checkpoint.</p>
+        </>}
+      </div>
       <div className="space-y-2"><Label className="text-xs">Сценарий</Label>
         <Select aria-label="VLA domain" value={config.domain} onChange={event => {
           const domain = event.target.value as keyof typeof presets
@@ -148,7 +171,7 @@ export function VLAStudio() {
       </div>
     </aside>
     <main className="flex-1 overflow-auto p-6 space-y-4">
-      <div><h2 className="text-xl font-semibold">VLA Studio</h2><p className="text-sm text-muted-foreground">Обучение action-моделей по демонстрациям — behavior cloning.</p></div>
+      <div><h2 className="text-xl font-semibold">VLA Studio</h2><p className="text-sm text-muted-foreground">SFT и групповые policy updates для action-моделей по изображениям, инструкциям и состоянию.</p></div>
       <Tabs value={tab} onValueChange={setTab}><TabsList><TabsTrigger value="launch">Обучение</TabsTrigger><TabsTrigger value="predict">Action preview</TabsTrigger><TabsTrigger value="history">История</TabsTrigger><TabsTrigger value="data">Формат данных</TabsTrigger></TabsList>
         <TabsContent value="launch"><div className="space-y-4">
           <Card><CardHeader><CardTitle>Action policy training</CardTitle><CardDescription>Native VLA учится с нуля; VLM + Action Head использует визуально-языковую основу и отдельный выход действий.</CardDescription></CardHeader><CardContent className="space-y-3">
@@ -168,6 +191,8 @@ export function VLAStudio() {
               <Line dataKey="loss" name="Action loss" stroke="var(--color-primary, #8b5cf6)" dot={false} isAnimationActive={false} />
               <Line dataKey="val_loss" name="Validation loss" stroke="#22c55e" connectNulls dot={false} isAnimationActive={false} />
             </LineChart></ResponsiveContainer></div>}
+            {(selectedRun?.config.training_algorithm??config.training_algorithm)!=='sft'&&current?.reward!=null&&<p className="text-xs">Demonstration reward: {current.reward.toFixed(6)} · KL: {Number(current.kl_divergence??0).toFixed(6)}</p>}
+            {current?.ngu_stats&&<p className="text-xs">NGU: samples {current.ngu_stats.samples??0} · retries {current.ngu_stats.retries??0} · mixed groups {current.ngu_stats.mixed??0} · exhausted {current.ngu_stats.budget??0}</p>}
             {current?.action_mae != null && <p className="text-xs">Action MAE (исходные единицы): {current.action_mae.toFixed(6)}</p>}
             {current?.action_accuracy != null && <p className="text-xs">Discrete accuracy: {(100 * current.action_accuracy).toFixed(1)}%</p>}
             {current?.error && <pre role="alert" className="whitespace-pre-wrap text-xs text-destructive">{current.error}</pre>}
@@ -178,8 +203,12 @@ export function VLAStudio() {
         <TabsContent value="predict"><ActionPreview initialPath={exportPath} gpuId={gpuId} stateDim={selectedRun?.config.state_dim ?? config.state_dim} /></TabsContent>
         <TabsContent value="history"><div className="space-y-3">
           {!runs.data?.runs.length && <p className="text-sm text-muted-foreground">VLA экспериментов пока нет.</p>}
-          {runs.data?.runs.map(run => <Card key={run.run_id}><CardContent className="p-4 flex flex-wrap items-center gap-3"><div className="flex-1 text-sm"><strong>{run.experiment_name || run.run_id}</strong><p className="text-xs text-muted-foreground">{run.status} · {run.current_step} / {run.total_steps} · {String(run.config.domain ?? '')} · {String(run.config.action_type ?? '')}</p></div>
+          {runs.data?.runs.map(run => <Card key={run.run_id}><CardContent className="p-4 flex flex-wrap items-center gap-3"><div className="flex-1 text-sm"><strong>{run.experiment_name || run.run_id}</strong><p className="text-xs text-muted-foreground">{run.status} · {run.current_step} / {run.total_steps} · {String(run.config.training_algorithm ?? 'sft')} · {String(run.config.domain ?? '')} · {String(run.config.action_type ?? '')}</p></div>
             <Button variant="outline" onClick={() => { setObserved(run.run_id); setTab('launch') }}>Метрики</Button>
+            {run.status==='completed'&&run.final_model_path&&<Button variant="outline" onClick={()=>{
+              const saved=Object.fromEntries(Object.keys(initial).filter(key=>key in run.config).map(key=>[key,(run.config as Record<string,unknown>)[key]])) as Partial<typeof config>
+              setConfig(previous=>({...previous,...saved,training_algorithm:'grpo',initial_policy_path:run.final_model_path!}));setTab('launch');setReport(null)
+            }}>Дообучить GRPO</Button>}
             {!run.process_running && !!run.checkpoints?.length && <Button variant="outline" disabled={busy} onClick={async () => {
               setBusy(true); setError(null)
               try { const result = await api.continueTraining(run.run_id, { max_steps: Math.max(config.max_steps, run.current_step + 100) }); setObserved(result.run_id); setTab('launch'); await runs.refetch() }

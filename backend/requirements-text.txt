@@ -1,0 +1,11 @@
+# Tested legacy text/API profile. Modern VLM/VLA belongs in a separate venv.
+-r requirements.txt
+torch==2.9.1
+torchvision==0.24.1
+transformers==4.57.3
+accelerate==1.12.0
+datasets==4.4.1
+peft==0.18.1
+safetensors==0.7.0
+numpy>=1.26,<3
+Pillow==12.0.0

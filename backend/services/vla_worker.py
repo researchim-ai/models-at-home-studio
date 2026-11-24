@@ -9,6 +9,8 @@ import sys
 import traceback
 sys.path.insert(0, str(Path.cwd()))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from backend.paths import add_runtime_path
+add_runtime_path()
 
 
 def preflight(config):
@@ -22,7 +24,20 @@ def preflight(config):
         data = Demonstrations(config['data_path'], config)
         if max(len(row['actions']) for row in data.rows) < config['action_horizon']:
             raise ValueError('No training targets for the full action horizon; reduce action_horizon or supply full chunks')
-        stats = data.statistics()
+        from backend.services.vla_grpo import initial_policy
+        initial=initial_policy(config)
+        stats = initial['statistics'] if initial else data.statistics()
+        algorithm=config.get('training_algorithm','sft')
+        if algorithm!='sft':
+            from homellm.training.rl.loss import GRPOLoss
+            width=config['action_dim']+(sum(config['discrete_classes']) if config['action_type']=='hybrid' else 0)
+            bank=len(data)*config['action_horizon']*width*4 if config['grpo_kl_beta'] else 0
+            if bank>256_000_000:raise ValueError('Reference output bank exceeds 256 MB; reduce dataset/horizon/head or set KL beta to 0')
+            check('Action GRPO','pass',f'{algorithm}: group={config["grpo_group_size"]}, updates={config["grpo_updates"]}, immutable reference bank {bank/2**20:.2f} MiB; our homellm RL core')
+            if algorithm=='ngu':
+                check('Never Give Up','warning',f'Bounded synchronous NGU: up to {config["ngu_max_attempts"]} rounds per observation, continuation p={config["ngu_continue_probability"]}. Binary verifier: normalized continuous RMSE <= {config["ngu_action_tolerance"]} and all valid categorical actions exact. Demonstration success is not environment success.')
+            check('Reward','warning','demonstration_distance: action similarity in normalized units, categorical accuracy; not environment success. Start from an SFT export for policy improvement.' if algorithm!='ngu' else 'Binary demonstration verifier, no real environment interaction; failed attempts count in the baseline. Initial SFT policy recommended.')
+        if initial:check('Initial policy','pass','Warm start preserves action/state normalization and validates the policy contract')
         check('Demonstrations', 'pass', f'{len(data)} rows; all action/state dimensions and finite values checked')
         if config.get('val_data_path'):
             validation = Demonstrations(config['val_data_path'], config)

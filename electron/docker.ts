@@ -1,12 +1,36 @@
 import Docker from 'dockerode'
 import fs from 'fs'
 import path from 'path'
+import { createHash } from 'crypto'
 
 const BASE_IMAGE_NAME = 'models-at-home-base:latest'
 const IMAGE_NAME = 'models-at-home-studio:latest'
 const CONTAINER_NAME = 'mah-studio-backend'
 const CONTAINER_PORT = 8000
 const OWNER_LABEL = 'com.modelsathome.studio'
+const BUILD_LABEL = 'com.modelsathome.studio.build'
+const BASE_SOURCES=['Dockerfile','requirements.txt','pyproject.toml','homellm','configs','blueprints','scripts','src','study_materials','README.md','README_RU.md','ARCHITECTURE.md','LICENSE','docker-compose.yml']
+const APP_SOURCES=['backend','examples','requirements-world-foundation.txt','requirements-world-local.txt','models-at-home/homellm','models-at-home/LICENSE','models-at-home/Dockerfile','models-at-home/requirements.txt','models-at-home/pyproject.toml']
+
+export function dockerBuildId(studioRoot:string,runtimeRoot=path.join(studioRoot,'models-at-home')):string {
+  const digest=createHash('sha256')
+  function visit(relative:string,root=studioRoot,prefix=''){
+    const full=path.join(root,relative);const stat=fs.lstatSync(full)
+    if(stat.isDirectory()){
+      for(const entry of fs.readdirSync(full).sort()){
+        if(['__pycache__','tests','.cache','unsloth_compiled_cache'].includes(entry))continue
+        visit(path.join(relative,entry),root,prefix)
+      }
+    }else if(stat.isFile()&&!relative.endsWith('.pyc')){
+      digest.update((prefix+relative).split(path.sep).join('/'));digest.update('\0');digest.update(fs.readFileSync(full));digest.update('\0')
+    }
+  }
+  APP_SOURCES.forEach(relative=>visit(relative))
+  if(path.resolve(runtimeRoot)!==path.resolve(studioRoot,'models-at-home')){
+    for(const relative of ['homellm','Dockerfile','requirements.txt','pyproject.toml'])visit(relative,runtimeRoot,'selected-runtime/')
+  }
+  return digest.digest('hex')
+}
 
 export type BuildProgress = (line: string) => void
 
@@ -58,7 +82,8 @@ export class DockerManager {
       const images = await this.docker.listImages({
         filters: { reference: [IMAGE_NAME] },
       })
-      return images.length > 0
+      const expected=dockerBuildId(this.studioRoot,this.projectRoot)
+      return images.some(image=>image.Labels?.[BUILD_LABEL]===expected)
     } catch {
       return false
     }
@@ -113,7 +138,7 @@ export class DockerManager {
 
     try {
       await this.buildTaggedImage(
-        { context: this.projectRoot, src: ['.'] },
+        { context: this.projectRoot, src: BASE_SOURCES.filter(name=>fs.existsSync(path.join(this.projectRoot,name))) },
         {
           t: BASE_IMAGE_NAME,
           dockerfile: 'Dockerfile',
@@ -124,10 +149,11 @@ export class DockerManager {
       )
 
       await this.buildTaggedImage(
-        { context: this.studioRoot, src: ['backend', 'examples', 'requirements-world-foundation.txt', 'requirements-world-local.txt'] },
+        { context: this.studioRoot, src: APP_SOURCES },
         {
           t: IMAGE_NAME,
           dockerfile: 'backend/Dockerfile',
+          buildargs:{STUDIO_BUILD_ID:dockerBuildId(this.studioRoot,this.projectRoot)},
         },
         onProgress,
         'backend',
@@ -225,6 +251,7 @@ export class DockerManager {
           Binds: [
             // Keep API source current while ML dependencies remain in the image.
             `${this.studioRoot}/backend:/app/backend:ro`,
+            `${this.projectRoot}/homellm:/app/homellm:ro`,
             `${this.workspaceRoot}/datasets:/app/datasets`,
             `${this.workspaceRoot}/out:/app/out`,
             `${this.workspaceRoot}/.runs:/app/.runs`,
@@ -242,6 +269,7 @@ export class DockerManager {
           'PYTHONUNBUFFERED=1',
           'MODELS_AT_HOME_ROOT=/app',
           ...['HF_TOKEN'].filter(name => process.env[name]).map(name => `${name}=${process.env[name]}`),
+          ...(process.env.MAH_DOCKER_VLM_PYTHON ? [`MAH_VLM_PYTHON=${process.env.MAH_DOCKER_VLM_PYTHON}`] : []),
           ...(process.env.MAH_DOCKER_WORLD_PYTHON ? [`MAH_WORLD_PYTHON=${process.env.MAH_DOCKER_WORLD_PYTHON}`] : []),
           `MAH_API_TOKEN=${opts.apiToken ?? ''}`,
           'JUPYTER_BIND_HOST=0.0.0.0',

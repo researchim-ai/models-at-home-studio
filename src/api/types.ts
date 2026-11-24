@@ -84,7 +84,7 @@ export interface TrainingConfig {
   lora_target_modules: string[]
 
   // GRPO-specific
-  grpo_algorithm: 'grpo' | 'dapo' | 'dr_grpo' | 'sdpo'
+  grpo_algorithm: 'grpo' | 'dapo' | 'dr_grpo' | 'sdpo' | 'ngu'
   grpo_group_size: number
   grpo_temperature: number
   grpo_max_new_tokens: number
@@ -127,7 +127,7 @@ export interface TrainingConfig {
 
 export interface TrainingRun {
   run_id: string
-  stage: TrainingStage | VLMStage | 'vla_sft' | 'world_model' | 'world_foundation'
+  stage: TrainingStage | VLMStage | 'vla_sft' | 'vla_grpo' | 'world_model' | 'world_foundation'
   final_model_path?: string | null
   process_running?: boolean
   status: RunStatus
@@ -135,13 +135,14 @@ export interface TrainingRun {
   finished_at?: string
   model_type: string
   experiment_name: string
-  config: Partial<TrainingConfig> & { domain?: string; action_type?: string; state_dim?: number }
+  config: Partial<TrainingConfig> & { training_algorithm?: string; domain?: string; action_type?: string; state_dim?: number }
   current_step: number
   total_steps: number
   checkpoints: string[]
 }
 
 export interface MetricsSnapshot {
+  ngu_stats?: Record<string,number>
   elapsed_seconds?: number
   step_seconds?: number
   estimated_remaining_seconds?: number

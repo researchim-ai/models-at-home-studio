@@ -18,3 +18,18 @@ jobs:
       - run: npm test
       - run: npm run test:backend
       - run: npx vite build
+
+  cpu-ml:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cpu
+      - run: python -m pip install -r backend/requirements-dev.txt -r backend/requirements-text.txt
+      - run: python -c "from backend.paths import add_runtime_path; assert add_runtime_path() is not None; import homellm.training.rl.loss"
+      - run: python -m pytest backend/tests -ra
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'

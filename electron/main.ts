@@ -360,7 +360,7 @@ async function startBackendDocker(config: AppConfig): Promise<boolean> {
   if (!(await dockerManager.imageExists())) {
     emitBootPhase({ phase: 'docker-no-image' })
     if (!config.dockerAutoBuild) {
-      backendStartError = 'Docker image missing and auto-build is disabled'
+      backendStartError = 'Docker image is missing or outdated for this Studio build; auto-build is disabled'
       return false
     }
     emitBootPhase({ phase: 'building-image' })

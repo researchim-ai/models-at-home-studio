@@ -95,18 +95,26 @@ async function main() {
         await waitFor('Policy objective')
         assert.equal(await evaluate(`document.querySelector('select[aria-label="VLM GRPO algorithm"] option[value="sdpo"]')?.disabled`), false)
         assert.equal(await evaluate(`Boolean(document.querySelector('select[aria-label="VLM GRPO algorithm"] option[value="gspo"]'))`), false)
-        console.log('PASS packaged modern VLM presets, native GRPO/SDPO, Unsloth and preflight gate')
+        assert.equal(await evaluate(`Boolean(document.querySelector('select[aria-label="VLM GRPO algorithm"] option[value="ngu"]'))`), true)
+        console.log('PASS packaged modern VLM presets, native GRPO/SDPO/NGU, Unsloth and preflight gate')
       }
       if (route === '/vla') {
         assert.equal(await evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.includes('Начать VLA обучение'))?.disabled`), true)
         assert.equal(await evaluate(`Boolean(document.querySelector('select[aria-label="VLA domain"] option[value="desktop"]'))`), true)
+        assert.equal(await evaluate(`Boolean(document.querySelector('select[aria-label="VLA algorithm"] option[value="grpo"]'))`), true)
         if (process.env.MAH_SMOKE_VLA_TRAIN === '1') {
-          await evaluate(`(() => { const select = document.querySelector('select[aria-label="VLA domain"]'); select.value = 'desktop'; select.dispatchEvent(new Event('change', { bubbles: true })); })()`)
+          if(process.env.MAH_SMOKE_VLA_ALGORITHM) {
+            await evaluate(`(() => { const select=document.querySelector('select[aria-label="VLA algorithm"]');select.value=${JSON.stringify(process.env.MAH_SMOKE_VLA_ALGORITHM)};select.dispatchEvent(new Event('change',{bubbles:true}));})()`)
+          }
+          await evaluate(`(() => { const select = document.querySelector('select[aria-label="VLA domain"]'); select.value = ${JSON.stringify(process.env.MAH_SMOKE_VLA_ALGORITHM==='ngu'?'robotics':'desktop')}; select.dispatchEvent(new Event('change', { bubbles: true })); })()`)
           for (let attempt = 0; attempt < 80; attempt++) {
             if (await evaluate(`[...document.querySelectorAll('button')].some(b => b.textContent.includes('Синтетическое демо') && !b.disabled)`)) break
             await delay(250)
           }
           await evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.includes('Синтетическое демо')).click()`)
+          if(process.env.MAH_SMOKE_VLA_ALGORITHM==='ngu') {
+            await evaluate(`(() => {const field=document.getElementById('vla-ngu_action_tolerance');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(field,'1');field.dispatchEvent(new Event('input',{bubbles:true}));})()`)
+          }
           for (const [id, value] of [['vla-max_steps', '2'], ['vla-save_every', '1'], ['vla-eval_every', '1'], ['vla-batch_size', '2']]) {
             await evaluate(`(() => { const field = document.getElementById(${JSON.stringify(id)}); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, ${JSON.stringify(value)}); field.dispatchEvent(new Event('input', { bubbles: true })); })()`)
           }
@@ -116,8 +124,12 @@ async function main() {
           assert.equal(await evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.includes('Начать VLA обучение')).disabled`), false)
           await evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.includes('Начать VLA обучение')).click()`)
           await waitFor('Policy export:')
-          await waitFor('Discrete accuracy:')
-          assert.equal(await evaluate(`document.body.innerText.includes('Discrete accuracy:')`), true, 'VLA hybrid validation accuracy missing')
+          if(process.env.MAH_SMOKE_VLA_ALGORITHM==='ngu') {
+            await waitFor('Action MAE');await waitFor('NGU: samples');
+          } else {
+            await waitFor('Discrete accuracy:')
+            assert.equal(await evaluate(`document.body.innerText.includes('Discrete accuracy:')`), true, 'VLA hybrid validation accuracy missing')
+          }
           if (process.env.MAH_DESKTOP_SCREENSHOT_DIR) {
             mkdirSync(process.env.MAH_DESKTOP_SCREENSHOT_DIR, { recursive: true })
             const shot = await command('Page.captureScreenshot', { format: 'png' })
@@ -132,9 +144,12 @@ async function main() {
             await delay(250)
           }
           await evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.includes('Предсказать действия')).click()`)
-          await waitFor('"continuous"')
-          await waitFor('"discrete"')
-          console.log('PASS packaged VLA synthetic desktop preflight, actual train, metrics/chart, export and action prediction')
+          if(process.env.MAH_SMOKE_VLA_ALGORITHM==='ngu') {
+            await waitFor('continuous · Horizon 8');
+            assert.equal(await evaluate(`(() => {const values=[...document.querySelectorAll('pre')].map(p=>{try{return JSON.parse(p.textContent)}catch{return null}}).find(v=>Array.isArray(v)&&v.length===8&&v.every(row=>Array.isArray(row)&&row.length===7));return !!values})()`),true);
+          }
+          else {await waitFor('"continuous"');await waitFor('"discrete"')}
+          console.log(`PASS packaged VLA ${process.env.MAH_SMOKE_VLA_ALGORITHM||'sft'} synthetic ${process.env.MAH_SMOKE_VLA_ALGORITHM==='ngu'?'robotics':'desktop'} preflight, actual train, metrics/chart, export and action prediction`)
         }
       }
       if (route === '/world-models') {

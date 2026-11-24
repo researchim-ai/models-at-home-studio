@@ -51,6 +51,8 @@ def test_vla_run_is_separate_and_resumes_via_common_api(client, workspace, monke
     checkpoint = __import__('pathlib').Path(config['output_dir']) / 'checkpoint-2'
     checkpoint.mkdir()
     (checkpoint / 'training_state.pt').write_bytes(b'placeholder')
+    (checkpoint / 'policy.json').write_text('{}')
+    (checkpoint / 'policy.safetensors').write_bytes(b'placeholder')
     (checkpoint / 'complete.json').write_text(json.dumps({'format': 'mah_vla_training_v1', 'step': 2}))
     response = client.post(f'/api/training/runs/{first}/continue', json={'max_steps': 4})
     assert response.status_code == 200, response.text

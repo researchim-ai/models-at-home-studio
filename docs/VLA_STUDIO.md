@@ -8,9 +8,9 @@
 - **Игры и симуляторы:** дискретные команды, аналоговые оси либо смешанная схема.
 - **Desktop:** screenshot/instruction → mouse deltas/scroll и отдельные категориальные головы для mouse button/key. Пресет содержит пример словаря команд; числа классов и семантика контрактов изменяемы.
 
-Обучение — behavior cloning по записанным демонстрациям. Политика предсказывает данные действий; эта страница не подключает конкретного робота, игру или ОС и не выполняет выданные команды. Для смешанных размеров viewport используйте нормализованные координаты либо передавайте размеры viewport в state; единицы действий должны оставаться согласованными в демонстрациях.
+Доступны SFT/behavior cloning и GRPO / Dr.GRPO / DAPO loss с reward по демонстрациям. Политика предсказывает данные действий; эта страница не подключает конкретного робота, игру или ОС и не выполняет выданные команды. Для смешанных размеров viewport используйте нормализованные координаты либо передавайте размеры viewport в state; единицы действий должны оставаться согласованными в демонстрациях.
 
-Для online RL нужны отдельные environment adapters, наблюдения и reward; фиктивный GRPO для action models не добавлялся.
+Для closed-loop RL нужны отдельные environment adapters, наблюдения и environment reward. Текущий action GRPO семплирует новые действия из policy, но оценивает их близость к записанным target actions; успех в реальной среде этим не измеряется.
 
 ## Два вида моделей
 
@@ -22,7 +22,7 @@
 
 ## Интерфейс
 
-1. Выберите сценарий и архитектуру.
+1. Выберите SFT либо GRPO / Dr.GRPO / DAPO loss, сценарий и архитектуру. Для улучшения готовой policy укажите её `final_model` как начальную VLA policy; в истории есть кнопка «Дообучить GRPO». Контракт действий, архитектура и нормализация должны совпадать.
 2. Укажите JSONL train и optional holdout, размерности, action type и horizon. Кнопка **Синтетическое демо** подставляет готовые примеры нужного домена и соответствующую схему.
 3. Нажмите **Проверить VLA**. Показываются кадр, инструкция, state, реальные action targets и найденные ошибки. До успешного актуального preflight запуск заблокирован; изменения формы и старые async-ответы сбрасывают разрешение.
 4. Запустите обучение. Виден optimizer step, action/validation loss, график, MAE в исходных единицах, classification accuracy, статус, ошибки, логи и export path. Stop завершает управляемый worker.
@@ -101,4 +101,24 @@ PYTHONPATH=/path/to/models-at-home .venv/bin/python scripts/smoke-vla.py --model
 PYTHONPATH=/path/to/models-at-home .venv-vlm/bin/python scripts/smoke-vla.py --model-path /path/to/Qwen3.5-0.8B --tiny-backbone --method full
 ```
 
-Успешный smoke проверяет реальные optimizer updates, nonzero gradients, validation, resume, изменение policy/head/LoRA weights и prediction после загрузки экспорта. Tiny и synthetic проверки не доказывают качество реального управления. Closed-loop environment success rate, multiple cameras/video, environment replay, rollout execution, RL rewards и готовые адаптеры LeRobot/OpenVLA/ACT не входят в эту первую реализацию.
+Успешный smoke проверяет реальные optimizer updates, nonzero gradients, validation, resume, изменение policy/head/LoRA weights и prediction после загрузки экспорта. Tiny и synthetic проверки не доказывают качество реального управления. Closed-loop environment success rate, multiple cameras/video, environment replay, rollout execution, environment rewards и готовые адаптеры LeRobot/OpenVLA/ACT не входят в эту первую реализацию.
+
+
+## Action GRPO (24 ноября 2026)
+
+`training_algorithm`: `sft`, `grpo`, `dr_grpo`, `dapo`. Stage — `vla_sft` либо `vla_grpo`; общий start/runs/stop/continue API обслуживает оба. Никакой TRL trainer не используется: action likelihood/masks передаются в наш `homellm.training.rl.loss.GRPOLoss`, advantages — в `compute_advantages`.
+
+- Continuous: независимые Normal для нормализованных координат с фиксированным `grpo_action_std`; inference возвращает mean в исходных единицах.
+- Discrete: Categorical logits/temperature; hybrid объединяет Gaussian и отдельные категориальные головы. Log-prob — совместная вероятность вектора на timestep.
+- Для каждого наблюдения семплируется `grpo_group_size` новых chunks. Reward: отрицательный средний MSE нормализованных continuous actions и/или categorical accuracy по валидным шагам. Padding не влияет на reward, advantages, loss или KL.
+- Advantages нормализуются внутри группы наблюдения. GRPO использует clipped ratio к detached old policy, `grpo_updates` optimizer updates на одну группу и KL к начальной policy. Dr.GRPO отключает std-нормализацию и использует фиксированный horizon; DAPO loss использует token-level reduction и асимметричный clip. Dynamic sampling/filtering, остальные компоненты полной DAPO training системы и SDPO teacher для действий здесь не реализованы.
+- KL вычисляется аналитически между распределениями текущих и начальных выходов. Reference outputs фиксируются для наблюдений обучающего датасета до первого update и сохраняются в checkpoint; второй экземпляр VLM на GPU не нужен. CPU bank ограничен 256 MB; `grpo_kl_beta=0` отключает bank и KL. Dropout отключается для согласованного sampling/likelihood.
+- `grpo_sft_weight` по умолчанию 0; положительное значение добавляет явный supervised anchor. Поля группы, std/temperature, clip, KL и числа updates доступны в интерфейсе. Большой sample buffer отклоняется до старта.
+- Начальная policy необязательна: Native может учиться с нуля; для pretrained action head практичнее сначала SFT. Warm start загружает веса и прежнюю train-only нормализацию. Это отдельный новый эксперимент, а не optimizer resume.
+
+Resume сохраняет sampler/order/cursor, Torch/CUDA RNG, AdamW/scaler/scheduler, immutable reference и незавершённую группу с sampled actions/old log-probs/advantages. Optimizer шаг считается только после успешного update; FP16 overflow уменьшает scale и повторяет те же microbatches. Learning rate после линейного warmup постоянный, поэтому изменение max_steps не меняет уже пройденный optimizer путь. Checkpoint на последнем шаге сохраняется даже вне save_every. Fingerprint включает JSONL, содержимое кадров, initial policy weights и reward/algorithm параметры; изменённые данные не продолжаются молча. Старые checkpoints с прежней схемой fingerprint требуют нового запуска.
+
+Тесты `test_vla_training.py` проверяют реальные updates и побитовый CPU resume посреди группы для SFT, GRPO continuous/hybrid, Dr.GRPO discrete и DAPO loss hybrid; отдельно проверяется SFT→GRPO и отклонение изменённого кадра. Сквозные smoke также проверяют pretrained Qwen3.5 LoRA/QLoRA через Transformers/Unsloth и Full на tiny Qwen3-VL. Отчёт текущего прогона: `vla-grpo-validation-2026-11-24.json`. Эти synthetic/tiny проверки подтверждают работу trainer, а не качество управления роботами.
+
+
+NGU (Never Give Up, 2026) доступен в VLM/VLA как отдельный bounded adaptive sampling режим поверх собственного GRPO. Настройки, источники и границы: [NGU.md](NGU.md).

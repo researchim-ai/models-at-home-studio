@@ -1,0 +1,495 @@
+{
+  "date": "2026-11-24",
+  "scope": "Real optimizer/validation/checkpoint/resume/export/prediction mechanics on synthetic demonstrations. Not a real-world environment success benchmark.",
+  "rl_engine": "homellm.training.rl.loss.GRPOLoss + action distribution bridge; no TRL trainer",
+  "gpu": [
+    "RTX 3090 Ti",
+    "RTX 3090"
+  ],
+  "pretrained": "Qwen/Qwen3.5-0.8B@2fc06364715b967f1860aea9cf38778875588b17",
+  "full_scope": "tiny random Qwen3-VL with real processor; Full tuning of pretrained 0.8B not certified",
+  "tests": {
+    "backend_legacy": 235,
+    "backend_modern": 235,
+    "frontend": 39
+  },
+  "trials": [
+    {
+      "case": "mah-vla-dapo",
+      "algorithm": "dapo",
+      "architecture": "native_vla",
+      "action_type": "discrete",
+      "domain": "robotics",
+      "backend": "transformers",
+      "tuning": "full",
+      "precision": "bf16",
+      "device": "cuda",
+      "steps": 12,
+      "resumed_step": 14,
+      "finite_losses": true,
+      "nonzero_gradients": true,
+      "validation_loss": 0.0,
+      "demonstration_reward": 1.0,
+      "kl": 0.6969663500785828,
+      "prediction": {
+        "actions": [
+          1,
+          1
+        ],
+        "action_type": "discrete",
+        "action_dim": 2,
+        "action_horizon": 2,
+        "action_names": []
+      }
+    },
+    {
+      "case": "mah-vla-dr-grpo",
+      "algorithm": "dr_grpo",
+      "architecture": "native_vla",
+      "action_type": "hybrid",
+      "domain": "simulation",
+      "backend": "transformers",
+      "tuning": "full",
+      "precision": "no",
+      "device": "cpu",
+      "steps": 12,
+      "resumed_step": 14,
+      "finite_losses": true,
+      "nonzero_gradients": true,
+      "validation_loss": 1.204944167818342,
+      "demonstration_reward": -0.08304297178983688,
+      "kl": 3.773399829864502,
+      "prediction": {
+        "actions": [
+          {
+            "continuous": [
+              0.6350870728492737,
+              -0.6252695322036743
+            ],
+            "discrete": [
+              1
+            ]
+          },
+          {
+            "continuous": [
+              0.6798802614212036,
+              -0.9845098257064819
+            ],
+            "discrete": [
+              1
+            ]
+          }
+        ],
+        "action_type": "hybrid",
+        "action_dim": 2,
+        "action_horizon": 2,
+        "action_names": [],
+        "discrete_names": [],
+        "discrete_classes": [
+          6
+        ],
+        "discrete_labels": []
+      }
+    },
+    {
+      "case": "mah-vla-grpo-cpu",
+      "algorithm": "grpo",
+      "architecture": "native_vla",
+      "action_type": "continuous",
+      "domain": "robotics",
+      "backend": "transformers",
+      "tuning": "full",
+      "precision": "no",
+      "device": "cpu",
+      "steps": 12,
+      "resumed_step": 14,
+      "finite_losses": true,
+      "nonzero_gradients": true,
+      "validation_loss": 0.03767960625035422,
+      "demonstration_reward": -0.3405555486679077,
+      "kl": 3.0883543491363525,
+      "prediction": {
+        "actions": [
+          [
+            0.5476386547088623,
+            -0.7052522897720337
+          ],
+          [
+            0.7717424035072327,
+            -0.8487616777420044
+          ]
+        ],
+        "action_type": "continuous",
+        "action_dim": 2,
+        "action_horizon": 2,
+        "action_names": []
+      }
+    },
+    {
+      "case": "mah-vla-grpo-fp16",
+      "algorithm": "grpo",
+      "architecture": "native_vla",
+      "action_type": "hybrid",
+      "domain": "desktop",
+      "backend": "transformers",
+      "tuning": "full",
+      "precision": "fp16",
+      "device": "cuda",
+      "steps": 12,
+      "resumed_step": 14,
+      "finite_losses": true,
+      "nonzero_gradients": true,
+      "validation_loss": 1.906348637172154,
+      "demonstration_reward": -0.3161366581916809,
+      "kl": 2.942532539367676,
+      "prediction": {
+        "actions": [
+          {
+            "continuous": [
+              0.9158907532691956,
+              -0.49735864996910095
+            ],
+            "discrete": [
+              1,
+              10
+            ]
+          },
+          {
+            "continuous": [
+              0.8104768991470337,
+              -0.901835560798645
+            ],
+            "discrete": [
+              1,
+              2
+            ]
+          }
+        ],
+        "action_type": "hybrid",
+        "action_dim": 2,
+        "action_horizon": 2,
+        "action_names": [],
+        "discrete_names": [],
+        "discrete_classes": [
+          4,
+          16
+        ],
+        "discrete_labels": []
+      }
+    },
+    {
+      "case": "mah-vla-pretrained-grpo",
+      "algorithm": "grpo",
+      "architecture": "vlm_action",
+      "action_type": "continuous",
+      "domain": "robotics",
+      "backend": "transformers",
+      "tuning": "lora",
+      "precision": "bf16",
+      "device": "cuda",
+      "steps": 3,
+      "resumed_step": 5,
+      "finite_losses": true,
+      "nonzero_gradients": true,
+      "validation_loss": 0.3822375535964966,
+      "demonstration_reward": -2.3114869594573975,
+      "kl": 4.890052795410156,
+      "prediction": {
+        "actions": [
+          [
+            0.44894635677337646,
+            0.3131568431854248
+          ],
+          [
+            0.21781669557094574,
+            -0.26779067516326904
+          ]
+        ],
+        "action_type": "continuous",
+        "action_dim": 2,
+        "action_horizon": 2,
+        "action_names": []
+      }
+    },
+    {
+      "case": "mah-vla-pretrained-qlora",
+      "algorithm": "grpo",
+      "architecture": "vlm_action",
+      "action_type": "hybrid",
+      "domain": "simulation",
+      "backend": "transformers",
+      "tuning": "qlora",
+      "precision": "bf16",
+      "device": "cuda",
+      "steps": 3,
+      "resumed_step": 5,
+      "finite_losses": true,
+      "nonzero_gradients": true,
+      "validation_loss": 2.9128440788814,
+      "demonstration_reward": -1.0766751766204834,
+      "kl": 5.168625831604004,
+      "prediction": {
+        "actions": [
+          {
+            "continuous": [
+              0.02533879317343235,
+              -1.317244291305542
+            ],
+            "discrete": [
+              2
+            ]
+          },
+          {
+            "continuous": [
+              -1.287649393081665,
+              0.29597827792167664
+            ],
+            "discrete": [
+              2
+            ]
+          }
+        ],
+        "action_type": "hybrid",
+        "action_dim": 2,
+        "action_horizon": 2,
+        "action_names": [],
+        "discrete_names": [],
+        "discrete_classes": [
+          6
+        ],
+        "discrete_labels": []
+      }
+    },
+    {
+      "case": "mah-vla-pretrained-sft-unsloth",
+      "algorithm": "sft",
+      "architecture": "vlm_action",
+      "action_type": "continuous",
+      "domain": "robotics",
+      "backend": "unsloth",
+      "tuning": "lora",
+      "precision": "bf16",
+      "device": "cuda",
+      "steps": 3,
+      "resumed_step": 5,
+      "finite_losses": true,
+      "nonzero_gradients": true,
+      "validation_loss": 0.4503985047340393,
+      "demonstration_reward": 0.0,
+      "kl": null,
+      "prediction": {
+        "actions": [
+          [
+            0.7144331336021423,
+            -0.658212423324585
+          ],
+          [
+            0.8299979567527771,
+            -0.49892035126686096
+          ]
+        ],
+        "action_type": "continuous",
+        "action_dim": 2,
+        "action_horizon": 2,
+        "action_names": []
+      }
+    },
+    {
+      "case": "mah-vla-pretrained-sft",
+      "algorithm": "sft",
+      "architecture": "vlm_action",
+      "action_type": "continuous",
+      "domain": "robotics",
+      "backend": "transformers",
+      "tuning": "lora",
+      "precision": "bf16",
+      "device": "cuda",
+      "steps": 3,
+      "resumed_step": 5,
+      "finite_losses": true,
+      "nonzero_gradients": true,
+      "validation_loss": 0.1797304345028741,
+      "demonstration_reward": 0.0,
+      "kl": null,
+      "prediction": {
+        "actions": [
+          [
+            1.2297898530960083,
+            -0.873725175857544
+          ],
+          [
+            1.342231273651123,
+            -0.34743669629096985
+          ]
+        ],
+        "action_type": "continuous",
+        "action_dim": 2,
+        "action_horizon": 2,
+        "action_names": []
+      }
+    },
+    {
+      "case": "mah-vla-pretrained-unsloth",
+      "algorithm": "grpo",
+      "architecture": "vlm_action",
+      "action_type": "hybrid",
+      "domain": "desktop",
+      "backend": "unsloth",
+      "tuning": "qlora",
+      "precision": "bf16",
+      "device": "cuda",
+      "steps": 3,
+      "resumed_step": 5,
+      "finite_losses": true,
+      "nonzero_gradients": true,
+      "validation_loss": 3.595477887562343,
+      "demonstration_reward": -1.586198329925537,
+      "kl": 7.6186347007751465,
+      "prediction": {
+        "actions": [
+          {
+            "continuous": [
+              1.0361406803131104,
+              -0.08897753804922104
+            ],
+            "discrete": [
+              3,
+              10
+            ]
+          },
+          {
+            "continuous": [
+              0.3505600690841675,
+              -0.028852587565779686
+            ],
+            "discrete": [
+              1,
+              1
+            ]
+          }
+        ],
+        "action_type": "hybrid",
+        "action_dim": 2,
+        "action_horizon": 2,
+        "action_names": [],
+        "discrete_names": [],
+        "discrete_classes": [
+          4,
+          16
+        ],
+        "discrete_labels": []
+      }
+    },
+    {
+      "case": "mah-vla-sft-cpu",
+      "algorithm": "sft",
+      "architecture": "native_vla",
+      "action_type": "continuous",
+      "domain": "robotics",
+      "backend": "transformers",
+      "tuning": "full",
+      "precision": "no",
+      "device": "cpu",
+      "steps": 12,
+      "resumed_step": 14,
+      "finite_losses": true,
+      "nonzero_gradients": true,
+      "validation_loss": 0.030881981764520918,
+      "demonstration_reward": 0.0,
+      "kl": null,
+      "prediction": {
+        "actions": [
+          [
+            1.4037796258926392,
+            -1.1489617824554443
+          ],
+          [
+            1.4221810102462769,
+            -1.409555196762085
+          ]
+        ],
+        "action_type": "continuous",
+        "action_dim": 2,
+        "action_horizon": 2,
+        "action_names": []
+      }
+    },
+    {
+      "case": "mah-vla-tiny-grpo-full",
+      "algorithm": "grpo",
+      "architecture": "vlm_action",
+      "action_type": "continuous",
+      "domain": "robotics",
+      "backend": "transformers",
+      "tuning": "full",
+      "precision": "bf16",
+      "device": "cuda",
+      "steps": 3,
+      "resumed_step": 5,
+      "finite_losses": true,
+      "nonzero_gradients": true,
+      "validation_loss": 0.5439587746347699,
+      "demonstration_reward": -1.5099765062332153,
+      "kl": 0.024072617292404175,
+      "prediction": {
+        "actions": [
+          [
+            -0.294416606426239,
+            0.01184887532144785
+          ],
+          [
+            0.18033620715141296,
+            -0.08351162821054459
+          ]
+        ],
+        "action_type": "continuous",
+        "action_dim": 2,
+        "action_horizon": 2,
+        "action_names": []
+      }
+    },
+    {
+      "case": "mah-vla-tiny-unsloth",
+      "algorithm": "grpo",
+      "architecture": "vlm_action",
+      "action_type": "continuous",
+      "domain": "robotics",
+      "backend": "unsloth",
+      "tuning": "full",
+      "precision": "bf16",
+      "device": "cuda",
+      "steps": 3,
+      "resumed_step": 5,
+      "finite_losses": true,
+      "nonzero_gradients": true,
+      "validation_loss": 0.5439583148275103,
+      "demonstration_reward": -1.508193850517273,
+      "kl": 0.024739235639572144,
+      "prediction": {
+        "actions": [
+          [
+            -0.292854905128479,
+            0.011556058190762997
+          ],
+          [
+            0.17877452075481415,
+            -0.084292471408844
+          ]
+        ],
+        "action_type": "continuous",
+        "action_dim": 2,
+        "action_horizon": 2,
+        "action_names": []
+      }
+    }
+  ],
+  "additional_checks": [
+    "CPU bitwise resume from checkpoint-1 inside an unfinished group for SFT/GRPO/Dr.GRPO/DAPO loss",
+    "SFT export to GRPO warm start; statistics retained",
+    "Changed image/reward/algorithm fingerprint rejects resume",
+    "Real LLM pretrain/resume/inference and SFT",
+    "Real native VLM GRPO optimizer, bitwise resume and image inference",
+    "RSSM hybrid FP16 training/resume/free-running rollout",
+    "Packaged Electron: all nine pages, VLA GRPO train/export/predict, World training and resource benchmark, Builder handoff/reload"
+  ]
+}

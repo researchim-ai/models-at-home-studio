@@ -7,6 +7,8 @@ import signal
 import sys
 import traceback
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]))
+from backend.paths import add_runtime_path
+add_runtime_path()
 
 if sys.platform=='linux':
     import ctypes

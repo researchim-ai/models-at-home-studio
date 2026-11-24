@@ -21,7 +21,22 @@ WORKER = Path(__file__).resolve().parents[1] / 'services' / 'vla_worker.py'
 
 class VLATrainingRequest(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
-    stage: Literal['vla_sft'] = 'vla_sft'
+    stage: Literal['vla_sft', 'vla_grpo'] = 'vla_sft'
+    training_algorithm: Literal['sft', 'grpo', 'dr_grpo', 'dapo', 'ngu'] = 'sft'
+    initial_policy_path: str = ''
+    reward_type: Literal['demonstration_distance','demonstration_verifier'] = 'demonstration_distance'
+    ngu_max_attempts: int = Field(default=4, ge=1, le=64)
+    ngu_continue_probability: float = Field(default=.9, ge=0, le=1)
+    ngu_max_refill_rounds: int = Field(default=8, ge=0, le=100)
+    ngu_action_tolerance: float = Field(default=.5, gt=0, le=10)
+    grpo_group_size: int = Field(default=8, ge=2, le=64)
+    grpo_updates: int = Field(default=2, ge=1, le=16)
+    grpo_clip_epsilon: float = Field(default=.2, gt=0, le=.5)
+    grpo_clip_epsilon_high: float = Field(default=.28, gt=0, le=1)
+    grpo_kl_beta: float = Field(default=.01, ge=0, le=1)
+    grpo_action_std: float = Field(default=.5, ge=.01, le=5)
+    grpo_temperature: float = Field(default=1., ge=.1, le=5)
+    grpo_sft_weight: float = Field(default=0., ge=0, le=10)
     architecture: Literal['native_vla', 'vlm_action'] = 'native_vla'
     training_backend: Literal['transformers', 'unsloth'] = 'transformers'
     domain: Literal['robotics', 'simulation', 'desktop'] = 'robotics'
@@ -68,6 +83,10 @@ class VLATrainingRequest(BaseModel):
 
     @model_validator(mode='after')
     def coherent(self):
+        # Accept the common stage contract, while keeping the explicit algorithm authoritative.
+        if self.stage == 'vla_grpo' and self.training_algorithm=='sft':self.training_algorithm = 'grpo'
+        self.stage = 'vla_grpo' if self.training_algorithm != 'sft' else 'vla_sft'
+        self.reward_type='demonstration_verifier' if self.training_algorithm=='ngu' else 'demonstration_distance'
         if len(self.gpu_ids) > 1 or any(value < 0 for value in self.gpu_ids):
             raise ValueError('VLA supports one selected GPU')
         if self.architecture == 'native_vla' and self.vision_grid > self.image_size // 4:
@@ -95,6 +114,10 @@ class VLATrainingRequest(BaseModel):
             raise ValueError('discrete_names must match discrete_classes')
         if self.action_type != 'discrete' and self.action_dim > 256:
             raise ValueError('Continuous action vectors are limited to 256 coordinates')
+        if self.training_algorithm!='sft':
+            sample_width=self.action_dim+(len(self.discrete_classes) if self.action_type=='hybrid' else 0) if self.action_type!='discrete' else 1
+            if self.batch_size*self.gradient_accumulation*self.grpo_group_size*self.action_horizon*sample_width*(self.ngu_max_attempts if self.training_algorithm=='ngu' else 1)>16_000_000:
+                raise ValueError('GRPO sample buffer exceeds 16M coordinates; reduce batch/group/horizon/accumulation')
         if self.max_pixels and self.min_pixels and self.min_pixels > self.max_pixels:
             raise ValueError('min_pixels exceeds max_pixels')
         return self
@@ -115,7 +138,9 @@ def complete_checkpoint(directory):
     try:
         marker = json.loads((directory / 'complete.json').read_text())
         return (isinstance(marker, dict) and marker.get('format') == 'mah_vla_training_v1'
-                and isinstance(marker.get('step'), int) and marker['step'] > 0
+                and type(marker.get('step')) is int and marker['step'] > 0
+                and (directory / 'policy.json').stat().st_size > 0
+                and ((directory / 'policy.safetensors').is_file() or ((directory / 'action_head.safetensors').is_file() and any((directory / 'backbone').glob('*.safetensors'))))
                 and (directory / 'training_state.pt').stat().st_size > 0)
     except (OSError, ValueError):
         return False
@@ -135,6 +160,8 @@ def normalized(req):
         if local.exists():
             config['model_path'] = str(local.resolve())
         config['base_model_path'] = config['model_path']
+    if req.initial_policy_path:
+        config['initial_policy_path'] = existing(req.initial_policy_path, 'initial policy', file=False)
     if req.resume_from_checkpoint:
         directory = Path(existing(req.resume_from_checkpoint, 'checkpoint', file=False))
         if not complete_checkpoint(directory):
@@ -201,15 +228,19 @@ def start(req: VLATrainingRequest):
     Path(config['output_dir']).mkdir(parents=True, exist_ok=False)
     atomic_json(run / 'config.json', config)
     atomic_json(run / 'metrics.json', {'status': 'initializing', 'current_step': 0})
-    processes.launch(run, [python, str(WORKER), '--mode', 'train', '--config', str(run / 'config.json'),
-                          '--metrics', str(run / 'metrics.json')], cwd=PROJECT_ROOT, env=env(req.gpu_ids))
+    try:
+        processes.launch(run, [python, str(WORKER), '--mode', 'train', '--config', str(run / 'config.json'),
+                              '--metrics', str(run / 'metrics.json')], cwd=PROJECT_ROOT, env=env(req.gpu_ids))
+    except Exception as exc:
+        atomic_json(run / 'metrics.json', {'status':'error','error':str(exc),'current_step':0})
+        raise HTTPException(500, f'VLA launch failed: {exc}')
     return {'run_id': run_id}
 
 
 @router.get('/runs')
 def runs():
     from backend.routes.training import list_runs
-    return {'runs': [row for row in list_runs()['runs'] if row['stage'] == 'vla_sft']}
+    return {'runs': [row for row in list_runs()['runs'] if row['stage'] in ('vla_sft','vla_grpo')]}
 
 
 @router.post('/stop/{run_id}')
@@ -217,7 +248,7 @@ def stop(run_id: str):
     run = safe_id(RUNS_DIR, run_id)
     if not (run / 'config.json').is_file():
         raise HTTPException(404, 'Run not found')
-    if json.loads((run / 'config.json').read_text()).get('stage') != 'vla_sft':
+    if json.loads((run / 'config.json').read_text()).get('stage') not in ('vla_sft','vla_grpo'):
         raise HTTPException(400, 'Not a VLA run')
     processes.stop(run)
     return {'success': True}

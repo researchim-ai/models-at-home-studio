@@ -1,0 +1,2 @@
+# Optional: install in the API interpreter used to start Jupyter.
+jupyterlab>=4.4,<5

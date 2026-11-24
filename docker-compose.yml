@@ -1,6 +1,6 @@
 # Models at Home Studio — Electron Backend
 #
-# First: docker build -t models-at-home-base:latest ${MAH_RUNTIME_ROOT:-../models-at-home}
+# First: docker build -t models-at-home-base:latest ${MAH_RUNTIME_ROOT:-./models-at-home}
 # Then: docker compose up --build
 #
 # The Electron app manages this automatically, but you can run it standalone.
@@ -17,19 +17,20 @@ services:
       - "127.0.0.1:8000:8000"
       - "127.0.0.1:8888:8888"
     volumes:
-      - ${MAH_RUNTIME_ROOT:-../models-at-home}/datasets:/app/datasets
-      - ${MAH_RUNTIME_ROOT:-../models-at-home}/out:/app/out
-      - ${MAH_RUNTIME_ROOT:-../models-at-home}/.runs:/app/.runs
-      - ${MAH_RUNTIME_ROOT:-../models-at-home}/blueprints:/app/blueprints
-      - ${MAH_RUNTIME_ROOT:-../models-at-home}/models:/app/models
-      - ${MAH_RUNTIME_ROOT:-../models-at-home}/configs:/app/configs
+      - ${MAH_RUNTIME_ROOT:-./models-at-home}/datasets:/app/datasets
+      - ${MAH_RUNTIME_ROOT:-./models-at-home}/out:/app/out
+      - ${MAH_RUNTIME_ROOT:-./models-at-home}/.runs:/app/.runs
+      - ${MAH_RUNTIME_ROOT:-./models-at-home}/blueprints:/app/blueprints
+      - ${MAH_RUNTIME_ROOT:-./models-at-home}/models:/app/models
+      - ${MAH_RUNTIME_ROOT:-./models-at-home}/configs:/app/configs
       - ./backend:/app/backend:ro
-      - ${MAH_RUNTIME_ROOT:-../models-at-home}/notebooks:/app/notebooks
-      - ${MAH_RUNTIME_ROOT:-../models-at-home}/study_materials:/app/study_materials:ro
+      - ${MAH_RUNTIME_ROOT:-./models-at-home}/notebooks:/app/notebooks
+      - ${MAH_RUNTIME_ROOT:-./models-at-home}/study_materials:/app/study_materials:ro
     environment:
       - PYTHONUNBUFFERED=1
       - MODELS_AT_HOME_ROOT=/app
       - HF_TOKEN=${HF_TOKEN:-}
+      - MAH_VLM_PYTHON=${MAH_DOCKER_VLM_PYTHON:-}
       - MAH_WORLD_PYTHON=${MAH_DOCKER_WORLD_PYTHON:-}
       - JUPYTER_BIND_HOST=0.0.0.0
       - MKL_THREADING_LAYER=GNU
@@ -73,12 +74,12 @@ services:
     ports:
       - "127.0.0.1:8889:8888"
     volumes:
-      - ${MAH_RUNTIME_ROOT:-../models-at-home}/datasets:/app/datasets
-      - ${MAH_RUNTIME_ROOT:-../models-at-home}/out:/app/out
-      - ${MAH_RUNTIME_ROOT:-../models-at-home}/.runs:/app/.runs
-      - ${MAH_RUNTIME_ROOT:-../models-at-home}/models:/app/models
-      - ${MAH_RUNTIME_ROOT:-../models-at-home}/configs:/app/configs
-      - ${MAH_RUNTIME_ROOT:-../models-at-home}/notebooks:/app/notebooks
+      - ${MAH_RUNTIME_ROOT:-./models-at-home}/datasets:/app/datasets
+      - ${MAH_RUNTIME_ROOT:-./models-at-home}/out:/app/out
+      - ${MAH_RUNTIME_ROOT:-./models-at-home}/.runs:/app/.runs
+      - ${MAH_RUNTIME_ROOT:-./models-at-home}/models:/app/models
+      - ${MAH_RUNTIME_ROOT:-./models-at-home}/configs:/app/configs
+      - ${MAH_RUNTIME_ROOT:-./models-at-home}/notebooks:/app/notebooks
     environment:
       - PYTHONUNBUFFERED=1
       - MODELS_AT_HOME_ROOT=/app

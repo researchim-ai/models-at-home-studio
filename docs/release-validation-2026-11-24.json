@@ -1,0 +1,126 @@
+{
+  "date": "2026-11-24",
+  "version": "0.2.0",
+  "status": "release_candidate",
+  "platform": "Linux x64",
+  "python": "3.12",
+  "electron": "45.4.1",
+  "checks": {
+    "api_python": {
+      "passed": 250,
+      "skipped": 0
+    },
+    "modern_ml_python": {
+      "passed": 250,
+      "skipped": 0
+    },
+    "clean_api_install": {
+      "passed": 169,
+      "skipped": 16,
+      "scope": "No Torch/Pillow; explicit optional ML skips"
+    },
+    "clean_cpu_ml_install": {
+      "passed": 250,
+      "skipped": 0,
+      "torch": "2.9.1+cpu",
+      "transformers": "4.57.3"
+    },
+    "frontend": {
+      "passed": 42
+    },
+    "typescript": "passed",
+    "vite": "passed",
+    "npm_ci": "passed",
+    "npm_audit": {
+      "known_vulnerabilities": 0,
+      "scope": "entire npm tree including dev; snapshot, not a security guarantee"
+    },
+    "compose_config": "passed",
+    "python_compileall": "passed",
+    "desktop": {
+      "electron": "45.4.1",
+      "passed": true,
+      "pages": 9,
+      "scope": [
+        "VLA NGU robotics CPU preflight/train/export/predict",
+        "native World training/rollout and resource benchmark/ETA",
+        "Builder handoff",
+        "reload/API health"
+      ],
+      "sandbox_note": "Diagnostic harness uses --no-sandbox on restricted host; production BrowserWindow sandbox/contextIsolation stay enabled"
+    },
+    "docker": {
+      "final_api_layer_build": "passed",
+      "seed_image": "pre-existing models-at-home-studio:latest reused as ML base under a separate release-check tag",
+      "health_version": "0.2.0",
+      "native_world_preflight_train_export": "passed",
+      "cuda_visible": true,
+      "torch": "2.9.0+cu128",
+      "network_during_smoke": "disabled",
+      "host_user_volumes": "none",
+      "full_base_rebuild": "not_run",
+      "modern_vlm_vla_training": "not_certified",
+      "build_fingerprint": "cf27cc11a40023c7155ebc8b5a1139ed6d2cc89ad29ec69a58ea9dc249e9eef6"
+    },
+    "jupyter": {
+      "jupyterlab": "4.6.6",
+      "start": true,
+      "authenticated_status": true,
+      "idempotent_start": true,
+      "managed_stop": true,
+      "token_random": true
+    },
+    "artifact_contents": {
+      "runtime_and_required_docs": true,
+      "user_data_env_venvs_excluded": true,
+      "package_api_version": "0.2.0",
+      "deb_metadata": "0.2.0 / amd64"
+    },
+    "final_appimage_extraction_and_desktop_smoke": "passed: nine pages, Builder handoff and reload/API health from the actual installer payload",
+    "sha256_manifest": "verified for both final installers"
+  },
+  "real_training": [
+    "LLM DDP two GPUs pretrain/resume/inference and SFT chat/instruct",
+    "native VLM SDPO LoRA update/checkpoint resume/image inference",
+    "pretrained Qwen3.5-0.8B Unsloth QLoRA SFT -> NGU -> checkpoint resume -> exported action prediction"
+  ],
+  "artifacts": {
+    "directory": "release",
+    "files": [
+      "Models at Home Studio-0.2.0-linux-x86_64.AppImage",
+      "Models at Home Studio-0.2.0-linux-amd64.deb"
+    ],
+    "sha256_manifest": "release/SHA256SUMS",
+    "note": "Checksums are generated alongside final installers after packaging; no self-referential hashes are embedded.",
+    "verified_files": [
+      {
+        "name": "Models at Home Studio-0.2.0-linux-amd64.deb",
+        "size_bytes": 107850880,
+        "sha256": "75ce9917a6c4119d9ef2822b24f418afe69bd2c6c4d5d5d37a7378eac0c802c2"
+      },
+      {
+        "name": "Models at Home Studio-0.2.0-linux-x86_64.AppImage",
+        "size_bytes": 136869793,
+        "sha256": "7fbae9a220c6665739f8cab178022692cf690ef90c021c57b4f791feb3a1c423"
+      }
+    ]
+  },
+  "limits": [
+    "Windows/macOS build targets are not install-tested",
+    "Full guarded Cosmos video generation remains unverified; guardrail HF access required",
+    "Pretrained DIAMOND/Cosmos finetuning not connected",
+    "VLA reward measures demonstrations, not environment success",
+    "NGU synchronous single-GPU; legacy text LLM NGU not connected",
+    "Pretrained Full VLM tuning not exhaustively certified; Full tiny and pretrained LoRA/QLoRA scopes differ",
+    "Live Agent GGUF/llama-server generation not exercised in this release pass; UI/API regressions tested",
+    "DIAMOND real inference evidence is from 2026-11-23; repeated current tests cover architecture/contracts, no fresh pretrained DIAMOND inference in this pass"
+  ],
+  "details": [
+    "VLM_VALIDATION.md",
+    "VLA_STUDIO.md",
+    "NGU.md",
+    "WORLD_FOUNDATION_MODELS.md",
+    "WORLD_MODELS_STUDIO.md"
+  ],
+  "package_copy_note": "For exact final validation and checksums use the release/source report plus SHA256SUMS next to installers; packaged documentation is a snapshot."
+}

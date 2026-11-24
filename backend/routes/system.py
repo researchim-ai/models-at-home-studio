@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi import APIRouter
 from backend.paths import get_project_root
+from backend.version import VERSION
 
 router = APIRouter()
 
@@ -15,7 +16,7 @@ CONFIGS_DIR = PROJECT_ROOT / "configs"
 
 @router.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "version": VERSION}
 
 
 @router.get("/gpu")

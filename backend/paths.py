@@ -8,6 +8,21 @@ import tempfile
 from pathlib import Path
 
 
+def add_runtime_path():
+    """Resolve code separately from the user's mutable workspace, including workers."""
+    import sys
+    studio=Path(__file__).resolve().parents[1]
+    explicit=os.environ.get('MAH_RUNTIME_ROOT')
+    candidates=[Path(explicit).expanduser()] if explicit else [studio/'models-at-home',studio.parent/'models-at-home']
+    for root in candidates:
+        if (root/'homellm').is_dir():
+            value=str(root.resolve())
+            if value not in sys.path:sys.path.insert(0,value)
+            return root
+    if explicit:raise ValueError('MAH_RUNTIME_ROOT must contain the homellm package')
+    return None
+
+
 def get_project_root(default: Path) -> Path:
     """Return the models-at-home root, overridable inside Docker."""
     override = os.environ.get("MODELS_AT_HOME_ROOT")

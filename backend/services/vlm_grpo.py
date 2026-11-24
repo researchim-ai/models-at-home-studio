@@ -57,8 +57,8 @@ def run(config, metrics):
 def native_config(config):
     """Use the exact configuration contract consumed by homellm's RL losses."""
     from homellm.training.rl.legacy_config import GRPOConfig
-    algorithm = {'dr_grpo': 'drgrpo'}.get(config['grpo_algorithm'], config['grpo_algorithm'])
-    return GRPOConfig(algorithm=algorithm, group_size=config['grpo_group_size'],
+    algorithm = {'dr_grpo': 'drgrpo','ngu':'grpo'}.get(config['grpo_algorithm'], config['grpo_algorithm'])
+    value=GRPOConfig(algorithm=algorithm, group_size=config['grpo_group_size'],
         max_new_tokens=config['grpo_max_new_tokens'], temperature=config['grpo_temperature'],
         clip_eps_low=config['grpo_clip_eps_low'], clip_eps_high=config['grpo_clip_eps_high'],
         kl_weight=config['grpo_kl_weight'], max_refill_rounds=config.get('grpo_max_refill_rounds', 3),
@@ -67,6 +67,10 @@ def native_config(config):
         sdpo_success_threshold=config.get('sdpo_success_threshold', .5),
         sdpo_alpha=config.get('sdpo_alpha', .5), sdpo_loss_weight=config.get('sdpo_loss_weight', 1.0),
         liger_fused_grpo=False, use_liger=False)
+    if config['grpo_algorithm']=='ngu':
+        value.use_std_normalization=False
+        value.dynamic_sampling=True
+    return value
 
 
 def sequence_inputs(prompt_inputs, sequence):

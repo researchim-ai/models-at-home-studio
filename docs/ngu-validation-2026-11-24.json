@@ -1,0 +1,161 @@
+{
+  "date": "2026-11-24",
+  "method": "Bounded synchronous NGU adaptive sampling + own homellm GRPO objective",
+  "paper": "https://arxiv.org/abs/2609.13443",
+  "scope": "Synthetic/tiny training mechanics, not a reproduction of the distributed paper or proof of real-world quality improvement",
+  "backend_tests_each_environment": 250,
+  "frontend_tests": 41,
+  "trials": [
+    {
+      "case": "mah-ngu-vla-cpu",
+      "modality": "vla",
+      "algorithm": "ngu",
+      "architecture": "native_vla",
+      "backend": "transformers",
+      "tuning": "full",
+      "device": "cpu",
+      "precision": "no",
+      "sft_warmup_steps": 0,
+      "optimizer_steps": 12,
+      "resume_step": 14,
+      "nonzero_gradient": true,
+      "ngu_stats": {
+        "prompts": 22,
+        "rounds": 60,
+        "samples": 480,
+        "retries": 38,
+        "budget": 8,
+        "mixed": 12,
+        "give_up": 2
+      },
+      "export_reloaded": true
+    },
+    {
+      "case": "mah-ngu-vla-fp16",
+      "modality": "vla",
+      "algorithm": "ngu",
+      "architecture": "native_vla",
+      "backend": "transformers",
+      "tuning": "full",
+      "device": "cuda",
+      "precision": "fp16",
+      "sft_warmup_steps": 0,
+      "optimizer_steps": 12,
+      "resume_step": 14,
+      "nonzero_gradient": true,
+      "ngu_stats": {
+        "prompts": 12,
+        "rounds": 12,
+        "samples": 96,
+        "retries": 0,
+        "mixed": 12
+      },
+      "export_reloaded": true
+    },
+    {
+      "case": "mah-ngu-vla-pretrained",
+      "modality": "vla",
+      "algorithm": "ngu",
+      "architecture": "vlm_action",
+      "backend": "transformers",
+      "tuning": "lora",
+      "device": "cuda",
+      "precision": "bf16",
+      "sft_warmup_steps": 0,
+      "optimizer_steps": 3,
+      "resume_step": 5,
+      "nonzero_gradient": true,
+      "ngu_stats": {
+        "prompts": 14,
+        "rounds": 44,
+        "samples": 352,
+        "retries": 30,
+        "budget": 9,
+        "mixed": 4,
+        "give_up": 1
+      },
+      "export_reloaded": true
+    },
+    {
+      "case": "mah-ngu-vla-unsloth-warm",
+      "modality": "vla",
+      "algorithm": "ngu",
+      "architecture": "vlm_action",
+      "backend": "unsloth",
+      "tuning": "qlora",
+      "device": "cuda",
+      "precision": "bf16",
+      "sft_warmup_steps": 30,
+      "optimizer_steps": 3,
+      "resume_step": 5,
+      "nonzero_gradient": true,
+      "ngu_stats": {
+        "prompts": 7,
+        "rounds": 16,
+        "samples": 128,
+        "retries": 9,
+        "mixed": 4,
+        "budget": 3
+      },
+      "export_reloaded": true
+    },
+    {
+      "case": "mah-ngu-vlm",
+      "modality": "vlm",
+      "algorithm": "ngu",
+      "architecture": "qwen3_vl",
+      "backend": "transformers",
+      "tuning": "full",
+      "device": "cuda",
+      "precision": null,
+      "sft_warmup_steps": 0,
+      "optimizer_steps": 2,
+      "resume_step": 4,
+      "nonzero_gradient": true,
+      "ngu_stats": {
+        "prompts": 2,
+        "rounds": 2,
+        "samples": 16,
+        "retries": 0,
+        "mixed": 2
+      },
+      "export_reloaded": true
+    },
+    {
+      "case": "mah-ngu-vlm-unsloth",
+      "modality": "vlm",
+      "algorithm": "ngu",
+      "architecture": "qwen3_vl",
+      "backend": "unsloth",
+      "tuning": "lora",
+      "device": "cuda",
+      "precision": null,
+      "sft_warmup_steps": 0,
+      "optimizer_steps": 2,
+      "resume_step": 4,
+      "nonzero_gradient": true,
+      "ngu_stats": {
+        "prompts": 2,
+        "rounds": 2,
+        "samples": 16,
+        "retries": 0,
+        "mixed": 2
+      },
+      "export_reloaded": true
+    }
+  ],
+  "verified_properties": [
+    "Failed attempts remain in the mixed group and its centered baseline",
+    "All-success groups skipped; all-failed retries bounded by probability, per-prompt rounds and update refill count",
+    "No optimizer update on exhausted unreachable verifier",
+    "VLA CPU exact resume inside pending variable-sized NGU groups for continuous/hybrid/discrete actions",
+    "Native VLM exact checkpoint resume",
+    "Cold Unsloth QLoRA random head may exhaust success budget; successful SFT warm-start path tested",
+    "Packaged Electron NGU option and actual VLA training/export/prediction; all nine pages loaded"
+  ],
+  "limitations": [
+    "No asynchronous cross-policy requeue or stale rollout filtering; policy version held fixed during collection",
+    "VLA verifier checks demonstration RMSE/category agreement; no environment adapter",
+    "Legacy text-only LLM trainer not extended in this change"
+  ]
+}

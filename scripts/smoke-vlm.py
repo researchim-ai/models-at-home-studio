@@ -18,7 +18,7 @@ def main():
     parser.add_argument('--stage', choices=['vlm_sft', 'vlm_pretrain', 'vlm_grpo'], default='vlm_sft')
     parser.add_argument('--family', choices=['qwen3_vl', 'qwen3_5'], default='qwen3_vl')
     parser.add_argument('--backend', choices=['transformers', 'unsloth'], default='transformers')
-    parser.add_argument('--algorithm', choices=['grpo', 'dr_grpo', 'dapo', 'sdpo'], default='grpo')
+    parser.add_argument('--algorithm', choices=['grpo', 'dr_grpo', 'dapo', 'sdpo', 'ngu'], default='grpo')
     parser.add_argument('--model-path', help='Optional real pretrained local checkpoint instead of random tiny weights')
     parser.add_argument('--result', help='Write a compact machine-readable proof of the completed smoke')
     parser.add_argument('--reward-target', default='red', help='Reference answer for GRPO smoke')

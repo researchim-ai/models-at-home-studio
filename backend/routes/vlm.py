@@ -73,7 +73,10 @@ class VLMTrainingRequest(BaseModel):
     min_pixels: int | None = Field(default=None, gt=0)
     max_pixels: int | None = Field(default=None, gt=0)
     training_backend: Literal['transformers', 'unsloth'] = 'transformers'
-    grpo_algorithm: Literal['grpo', 'dr_grpo', 'dapo', 'sdpo'] = 'grpo'
+    grpo_algorithm: Literal['grpo', 'dr_grpo', 'dapo', 'sdpo', 'ngu'] = 'grpo'
+    ngu_max_attempts: int = Field(default=4, ge=1, le=64)
+    ngu_continue_probability: float = Field(default=.9, ge=0, le=1)
+    ngu_max_refill_rounds: int = Field(default=8, ge=0, le=100)
     grpo_group_size: int = Field(default=4, ge=2, le=64)
     grpo_max_new_tokens: int = Field(default=256, gt=0)
     grpo_temperature: float = Field(default=1.0, gt=0, le=2)
@@ -91,6 +94,14 @@ class VLMTrainingRequest(BaseModel):
     sdpo_full_logit_distillation: bool = False
     sdpo_distillation_topk: int | None = Field(default=None, gt=0)
 
+
+    @model_validator(mode='after')
+    def ngu_budget(self):
+        if self.stage=='vlm_grpo' and self.grpo_algorithm=='ngu':
+            if self.grpo_group_size*self.ngu_max_attempts>512:raise ValueError('NGU supports at most 512 completions per prompt; reduce group/attempts')
+            if self.batch_size*self.gradient_accumulation*self.grpo_group_size*self.ngu_max_attempts*self.grpo_max_new_tokens>2_000_000:
+                raise ValueError('NGU rollout token budget exceeds 2M per optimizer update; reduce batch/accumulation/group/attempts/tokens')
+        return self
 
     @model_validator(mode="before")
     @classmethod

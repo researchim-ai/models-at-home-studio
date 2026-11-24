@@ -25,7 +25,7 @@ class NativeVLMTrainer:
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
         metrics.update(status='loading_model', stage='vlm_grpo', rl_engine='homellm_native',
-                       native_algorithm=self.rl.algorithm.value)
+                       native_algorithm=config['grpo_algorithm'],native_objective=self.rl.algorithm.value)
         self.processor = common.load_vlm_processor(config['base_model_path'], config)
         self.model = apply_adapters(load_model(config['base_model_path'], config, 'cuda'), config)
         if config['mixed_precision'] == 'fp16':
@@ -47,6 +47,7 @@ class NativeVLMTrainer:
         if not len(self.data):
             raise ValueError('GRPO dataset contains no valid examples')
         self.cursor = self.step = self.filtered = self.generated = self.teacher_forwards = 0
+        self.ngu_stats={}
         self.successful = {}
         self.sidecars = {}
         self.optimizer = torch.optim.AdamW([p for p in self.model.parameters() if p.requires_grad],
@@ -71,6 +72,7 @@ class NativeVLMTrainer:
                 'mixed_precision', 'learning_rate', 'warmup_steps', 'lr_schedule',
                 'freeze_vision_tower', 'freeze_projector', 'freeze_language_model',
                 'lora_dropout', 'lora_modules_to_save', 'gradient_checkpointing')
+        if self.config.get('grpo_algorithm','grpo')=='ngu':keys+=('ngu_max_attempts','ngu_continue_probability','ngu_max_refill_rounds')
         payload = {key: self.config.get(key) for key in keys}
         for key in ('grpo_temperature', 'grpo_clip_eps_low', 'grpo_clip_eps_high', 'grpo_kl_weight',
                     'sdpo_success_threshold', 'sdpo_alpha', 'sdpo_loss_weight', 'grpo_overlong_penalty',
@@ -141,34 +143,48 @@ class NativeVLMTrainer:
         suppressed = sorted({getattr(self.model.config, key) for key in
             ('image_token_id', 'video_token_id', 'vision_start_token_id', 'vision_end_token_id')
             if isinstance(getattr(self.model.config, key, None), int)})
-        self.model.eval()
-        if self.config['training_backend'] == 'unsloth':
-            from unsloth import FastVisionModel
-            FastVisionModel.for_inference(self.model)
-        with torch.no_grad(), self._amp():
-            sequences = self.model.generate(**inputs, max_new_tokens=self.rl.max_new_tokens,
-                do_sample=True, temperature=self.rl.temperature, top_p=1.0, top_k=0,
-                num_return_sequences=self.rl.group_size, suppress_tokens=suppressed,
-                pad_token_id=self.processor.tokenizer.pad_token_id, use_cache=True)
-        self._training_mode()
-        self.model.eval()  # no checkpoint graph needed for frozen rollout probabilities
-        eos = self.model.generation_config.eos_token_id
-        eos = set(eos if isinstance(eos, list) else [eos])
-        completions = []
-        for sequence in sequences:
-            completion = sequence[prompt_length:]
-            # Keep first EOS as an action, discard padding after it, even PAD=EOS.
-            for position, value in enumerate(completion.tolist()):
-                if value in eos:
-                    completion = completion[:position + 1]
-                    break
-            if not completion.numel():
-                raise ValueError('Empty VLM completion has no policy actions')
-            completions.append(completion)
-        texts = self.processor.batch_decode(completions, skip_special_tokens=True)
         score = reward_function(self.config['grpo_reward_fn'])
         reward = BinaryReward(lambda completion, reference: bool(score([completion], [reference])[0]))
-        rewards = reward.batch_call(texts, [answer] * len(texts)).to(self.model.device)
+        def draw():
+            self.model.eval()
+            if self.config['training_backend'] == 'unsloth':
+                from unsloth import FastVisionModel
+                FastVisionModel.for_inference(self.model)
+            with torch.no_grad(), self._amp():
+                sequences = self.model.generate(**inputs, max_new_tokens=self.rl.max_new_tokens,
+                    do_sample=True, temperature=self.rl.temperature, top_p=1.0, top_k=0,
+                    num_return_sequences=self.rl.group_size, suppress_tokens=suppressed,
+                    pad_token_id=self.processor.tokenizer.pad_token_id, use_cache=True)
+            self._training_mode()
+            self.model.eval()  # no checkpoint graph needed for frozen rollout probabilities
+            eos = self.model.generation_config.eos_token_id
+            eos = set(eos if isinstance(eos, list) else [eos])
+            completions = []
+            for sequence in sequences:
+                completion = sequence[prompt_length:]
+                # Keep first EOS as an action, discard padding after it, even PAD=EOS.
+                for position, value in enumerate(completion.tolist()):
+                    if value in eos:
+                        completion = completion[:position + 1]
+                        break
+                if not completion.numel():
+                    raise ValueError('Empty VLM completion has no policy actions')
+                completions.append(completion.cpu())
+            texts = self.processor.batch_decode(completions, skip_special_tokens=True)
+            rewards = reward.batch_call(texts, [answer] * len(texts)).to(self.model.device)
+            return completions,rewards
+        if self.config.get('grpo_algorithm','grpo')=='ngu':
+            from backend.services.ngu import collect,record
+            result=collect(draw,max_attempts=self.config['ngu_max_attempts'],continue_probability=self.config['ngu_continue_probability'])
+            record(self.ngu_stats,result)
+            self.metrics.update(ngu_stats=dict(self.ngu_stats))
+            if result.status!='mixed':
+                self.filtered+=1;self.generated+=1
+                return False,result.rewards.cpu()
+            completions=[c for chunk in result.chunks for c in chunk];rewards=result.rewards
+            texts=self.processor.batch_decode(completions,skip_special_tokens=True)
+        else:
+            completions,rewards=draw();texts=self.processor.batch_decode(completions,skip_special_tokens=True)
         if self.rl.algorithm.value == 'dapo':
             lengths = torch.tensor([len(c) for c in completions], device=rewards.device)
             rewards += compute_overlong_penalty(lengths, self.rl.max_new_tokens,
@@ -181,7 +197,7 @@ class NativeVLMTrainer:
         items = []
         uid = self.generated
         for completion, text, reward, advantage in zip(completions, texts, rewards, advantages):
-            seq = torch.cat([inputs['input_ids'][0], completion]).unsqueeze(0)
+            seq = torch.cat([inputs['input_ids'][0], completion.to(inputs['input_ids'].device)]).unsqueeze(0)
             model_inputs = sequence_inputs(inputs, seq)
             with torch.no_grad():
                 old = self._log_probs(self.model, model_inputs, len(completion))
@@ -271,7 +287,7 @@ class NativeVLMTrainer:
                 'signature_payload': self.signature_payload,
                 'step': self.step, 'cursor': self.cursor, 'successful': self.successful,
                 'filtered': self.filtered, 'generated': self.generated,
-                'teacher_forwards': self.teacher_forwards,
+                'teacher_forwards': self.teacher_forwards,'ngu_stats':self.ngu_stats,
                 'optimizer': self.optimizer.state_dict(), 'scheduler': self.scheduler.state_dict(),
                 'scaler': self.scaler.state_dict(), 'python_rng': random.getstate(),
                 'torch_rng': self.torch.get_rng_state(), 'cuda_rng': self.torch.cuda.get_rng_state_all(),
@@ -315,6 +331,7 @@ class NativeVLMTrainer:
         self.successful = state['successful']
         self.filtered, self.generated = state['filtered'], state['generated']
         self.teacher_forwards = state.get('teacher_forwards', 0)
+        self.ngu_stats=state.get('ngu_stats',{})
         random.setstate(state['python_rng'])
         self.torch.set_rng_state(state['torch_rng'])
         self.torch.cuda.set_rng_state_all(state['cuda_rng'])
@@ -329,17 +346,17 @@ class NativeVLMTrainer:
             rewards = []
             required = self.config['batch_size'] * self.config['gradient_accumulation']
             groups = attempts = 0
-            while groups < required and attempts < required * (1 + self.rl.max_refill_rounds):
+            while groups < required and attempts < required * (1 + (self.config['ngu_max_refill_rounds'] if self.config.get('grpo_algorithm','grpo')=='ngu' else self.rl.max_refill_rounds)):
                 added, values = self._collect()
                 rewards.append(values)
                 groups += int(added)
                 attempts += 1
             if groups < required:
-                raise ValueError('Native dynamic sampling exhausted refill rounds: insufficient nonconstant reward groups; revise reward or dataset')
+                raise ValueError('NGU/native sampling exhausted refill rounds (bounded): insufficient mixed verifier-reward groups; revise reward, dataset or budget')
             loss, kl, norm, distill = self._update()
             self.step += 1
-            all_rewards = self.torch.stack(rewards)
-            std = float(all_rewards.std(dim=-1).mean())
+            all_rewards = self.torch.cat(rewards)
+            std = float(self.torch.stack([values.std() for values in rewards]).mean())
             warning = 'Во всех группах одинаковые награды: сигнал от reward равен нулю.' if std == 0 else None
             self.metrics.log_step(self.step, loss, self.optimizer.param_groups[0]['lr'], reward=float(all_rewards.mean()))
             for key, value in [('grad_norm_history', norm), ('kl_history', kl),

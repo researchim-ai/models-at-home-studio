@@ -12,6 +12,7 @@ def recipe(**values):return WorldRequest(**values).model_dump()
 
 @pytest.mark.parametrize('architecture,state,kind,classes',[('latent_gru',0,'continuous',[]),('rssm',3,'hybrid',[3,4]),('rssm',0,'discrete',[])])
 def test_exact_parameter_count(architecture,state,kind,classes):
+    pytest.importorskip('torch')
     from backend.services.world_model import WorldModel
     c=recipe(architecture=architecture,state_dim=state,action_type=kind,discrete_classes=classes)
     assert r.native_parameters(c)==sum(p.numel() for p in WorldModel(c).parameters())

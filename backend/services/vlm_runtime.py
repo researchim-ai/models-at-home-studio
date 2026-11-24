@@ -54,6 +54,9 @@ def runtime_types(config=None):
     from homellm.training.vlm_data import VLMJsonlDataset, VLMDataCollator
 
     class Dataset(VLMJsonlDataset):
+        def __init__(self, file_path, *, prompt_for_caption='Describe this image.', field_map=None):
+            self.field_map=field_map or (config or {}).get('vlm_columns') or {}
+            super().__init__(file_path,prompt_for_caption=prompt_for_caption)
         def _load(self):
             from homellm.training.vlm_data import (_extract_image_refs, _build_messages_from_record,
                                                   _extract_target_text)
@@ -81,10 +84,20 @@ def runtime_types(config=None):
 
     class Collator(VLMDataCollator):
         def _load_example_images(self, example):
-            images = super()._load_example_images(example)
+            from homellm.training.vlm_data import load_image
+            images = [load_image(ref,self.base_dir) for ref in example['image_refs']]
+            images = [image for image in images if image is not None]
             if len(images) != len(example['image_refs']):
                 raise ValueError('An image failed to load; refusing to change the multimodal example silently')
             return images
+
+        @staticmethod
+        def _images_arg(images):return images[0] if len(images)==1 else images
+
+        def _build_inputs(self, prepared):
+            return self.processor(text=[text for _,_,text in prepared],
+                images=[self._images_arg(images) for _,images,_ in prepared],return_tensors='pt',
+                padding=True,truncation=False,return_token_type_ids=False)
 
         def _collect_special_token_ids(self):
             tokenizer = self.processor.tokenizer
@@ -108,12 +121,14 @@ def runtime_types(config=None):
                             text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=generation)
                             result = self.processor(text=[text], images=[self._images_arg(images)], return_tensors='pt', padding=False)
                             tokens = result['input_ids'][0]
-                            if not torch.equal(ids[row, :len(tokens)], tokens):
+                            valid_ids=ids[row][batch['attention_mask'][row].bool()]
+                            if not torch.equal(valid_ids[:len(tokens)], tokens):
                                 raise ValueError('Chat template does not produce a stable prefix; assistant-only labels cannot be verified')
                             return len(tokens)
                         start = prefix(example['messages'][:index], True)
                         end = prefix(example['messages'][:index + 1], False)
-                        labels[row, start:end] = ids[row, start:end]
+                        positions=torch.nonzero(batch['attention_mask'][row],as_tuple=False).flatten()[start:end]
+                        labels[row, positions] = ids[row, positions]
             labels[batch['attention_mask'] == 0] = -100
             for token_id in self._collect_special_token_ids():
                 labels[ids == token_id] = -100

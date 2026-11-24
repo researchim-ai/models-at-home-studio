@@ -12,7 +12,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.paths import get_project_root
+from backend.version import VERSION
+from backend.paths import get_project_root, add_runtime_path
+add_runtime_path()
 from backend.services import processes
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
@@ -43,7 +45,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Models at Home Studio API",
-    version="0.1.0",
+    version=VERSION,
     lifespan=lifespan,
 )
 

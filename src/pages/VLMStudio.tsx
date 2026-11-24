@@ -34,8 +34,9 @@ function VLMConfigSidebar({
   maxSteps, setMaxSteps,
   tuningMethod, setTuningMethod, gpuId, setGpuId,
   backend, setBackend, algorithm, setAlgorithm, groupSize, setGroupSize, completionTokens, setCompletionTokens, reward, setReward,
-  seqLen, setSeqLen, maxPixels, setMaxPixels, precision, setPrecision,
+  seqLen, setSeqLen, maxPixels, setMaxPixels, precision, setPrecision, ngu, setNgu,
 }: {
+  ngu: {ngu_max_attempts:number;ngu_continue_probability:number;ngu_max_refill_rounds:number}; setNgu:(v:{ngu_max_attempts:number;ngu_continue_probability:number;ngu_max_refill_rounds:number})=>void
   stage: string; setStage: (v: string) => void
   model: string; setModel: (v: string) => void
   datasetPath: string; setDatasetPath: (v: string) => void
@@ -150,7 +151,14 @@ function VLMConfigSidebar({
           {stage === 'vlm_grpo' && <div className="space-y-2">
             <Label className="text-xs">Policy objective</Label>
             <Select aria-label="VLM GRPO algorithm" value={algorithm} onChange={event => setAlgorithm(event.target.value)}
-              options={['grpo', 'dr_grpo', 'dapo', 'sdpo'].map(value => ({ value, label: value.toUpperCase() }))} />
+              options={['grpo', 'dr_grpo', 'dapo', 'sdpo', 'ngu'].map(value => ({ value, label: value==='ngu'?'Never Give Up (2026) + GRPO':value.toUpperCase() }))} />
+            {algorithm==='ngu'&&<div className="space-y-2">
+              <p className="text-xs text-muted-foreground">NGU повторяет sampling неуспешных prompts и объединяет попытки. Синхронный режим на одной GPU; успех задаёт выбранный бинарный Reward.</p>
+              <Label className="text-xs">Максимум NGU раундов</Label><Input aria-label="VLM NGU attempts" type="number" min={1} max={64} value={ngu.ngu_max_attempts} onChange={event=>setNgu({...ngu,ngu_max_attempts:Number(event.target.value)})}/>
+              <Label className="text-xs">Вероятность продолжения</Label><Input aria-label="VLM NGU probability" type="number" min={0} max={1} step={.05} value={ngu.ngu_continue_probability} onChange={event=>setNgu({...ngu,ngu_continue_probability:Number(event.target.value)})}/>
+              <Label className="text-xs">Дополнительные prompts на группу</Label><Input aria-label="VLM NGU refill" type="number" min={0} max={100} value={ngu.ngu_max_refill_rounds} onChange={event=>setNgu({...ngu,ngu_max_refill_rounds:Number(event.target.value)})}/>
+              <p className="text-xs text-muted-foreground">До {groupSize*ngu.ngu_max_attempts} ответов на prompt; верхняя оценка токенов одного update: {batchSize*4*groupSize*ngu.ngu_max_attempts*completionTokens} при стандартном accumulation=4, без дополнительных prompts. Непреодолимый verifier завершает пробу с ошибкой после исчерпания бюджета.</p>
+            </div>}
             <Label className="text-xs">Ответов на один prompt</Label>
             <Input aria-label="VLM GRPO group size" type="number" min={2} max={64} value={groupSize}
               onChange={event => setGroupSize(Number(event.target.value))} />
@@ -359,6 +367,7 @@ function VLMLaunchTab({ config }: { config: Record<string, unknown> }) {
           {config.stage === 'vlm_grpo' && <p className="text-xs text-muted-foreground">
             Reward: {metrics?.reward ?? '—'} · KL: {metrics?.kl_divergence ?? '—'}
           </p>}
+          {metrics?.ngu_stats&&<p className="text-xs">NGU: samples {metrics.ngu_stats.samples??0} · retries {metrics.ngu_stats.retries??0} · mixed groups {metrics.ngu_stats.mixed??0} · exhausted {metrics.ngu_stats.budget??0}</p>}
           {metrics?.final_model_dir && <p className="break-all text-xs">Model: {metrics.final_model_dir}</p>}
           <details><summary className="cursor-pointer text-xs">Training logs</summary>
             <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs">{logs?.stderr || logs?.stdout || 'Waiting for worker output…'}</pre>
@@ -642,6 +651,7 @@ export function VLMStudio() {
   const [epochs] = useState(1)
   const [backend, setBackend] = useState('transformers')
   const [algorithm, setAlgorithm] = useState('grpo')
+  const [ngu,setNgu]=useState({ngu_max_attempts:4,ngu_continue_probability:.9,ngu_max_refill_rounds:8})
   const [groupSize, setGroupSize] = useState(4)
   const [completionTokens, setCompletionTokens] = useState(256)
   const [reward, setReward] = useState('exact_match')
@@ -661,6 +671,7 @@ export function VLMStudio() {
     max_steps: maxSteps,
     training_backend: backend,
     grpo_algorithm: algorithm,
+    ...ngu,
     grpo_group_size: groupSize,
     grpo_max_new_tokens: completionTokens,
     grpo_reward_fn: reward,
@@ -685,7 +696,7 @@ export function VLMStudio() {
         maxSteps={maxSteps} setMaxSteps={setMaxSteps}
         backend={backend} setBackend={setBackend} algorithm={algorithm} setAlgorithm={setAlgorithm}
         groupSize={groupSize} setGroupSize={setGroupSize} completionTokens={completionTokens} setCompletionTokens={setCompletionTokens}
-        reward={reward} setReward={setReward}
+        reward={reward} setReward={setReward} ngu={ngu} setNgu={setNgu}
         tuningMethod={tuningMethod} setTuningMethod={setTuningMethod} gpuId={gpuId} setGpuId={setGpuId}
         seqLen={seqLen} setSeqLen={setSeqLen} maxPixels={maxPixels} setMaxPixels={setMaxPixels} precision={precision} setPrecision={setPrecision}
       />

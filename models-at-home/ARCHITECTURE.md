@@ -1,0 +1,488 @@
+# HomeLLM — Архитектура и реализация
+
+> Пакет для тренировки языковых моделей-трансформеров в домашних условиях
+
+---
+
+## 📁 Структура проекта
+
+```
+models-at-home/
+├── homellm/                    # Основной пакет
+│   ├── __init__.py             # Версия: 0.1.0
+│   ├── models/                 # Архитектура модели
+│   │   ├── __init__.py
+│   │   └── home_model.py       # HomeConfig, HomeModel, HomeForCausalLM
+│   ├── training/               # Скрипты обучения
+│   │   ├── __init__.py
+│   │   └── pretrain.py         # Претрейн с нуля
+│   └── cli/                    # Интерфейс командной строки
+│       ├── __init__.py
+│       └── chat.py             # Интерактивный чат
+├── configs/                    # Конфигурации distributed training
+│   ├── accelerate_default.yaml
+│   ├── accelerate_multi_gpu.yaml
+│   ├── accelerate_fsdp.yaml
+│   ├── accelerate_deepspeed_zero2.yaml
+│   ├── accelerate_deepspeed_zero3.yaml
+│   └── accelerate_deepspeed_zero3_offload.yaml
+├── datasets/                    # Данные для обучения
+│   └── fineweb_ru_1GB.jsonl    # Русскоязычный корпус (1 ГБ)
+├── scripts/                    # Скрипты запуска
+│   ├── run_pretrain.sh         # Быстрый старт претрейна
+│   └── run_chat.sh             # Запуск чата
+├── out/                        # Чекпойнты и модели
+│   └── home_pretrain/          # Сохранённые веса
+├── requirements.txt            # Зависимости
+└── ARCHITECTURE.md             # Этот файл
+```
+
+---
+
+## 🧠 Архитектура модели (HomeForCausalLM)
+
+### Конфигурация (HomeConfig)
+
+| Параметр | По умолчанию | Описание |
+|----------|--------------|----------|
+| `vocab_size` | 50257 | Размер словаря (GPT-2 совместимый) |
+| `hidden_size` | 512 | Размерность скрытого слоя |
+| `num_hidden_layers` | 8 | Количество слоёв трансформера |
+| `num_attention_heads` | 8 | Количество голов внимания |
+| `intermediate_size` | hidden_size × 4 | Размер FFN |
+| `dropout` | 0.0 | Dropout (0 для инференса) |
+| `max_position_embeddings` | 4096 | Максимальная длина контекста |
+| `rope_theta` | 10000.0 | Параметр RoPE |
+
+### Компоненты модели
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      HomeForCausalLM                        │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌───────────────┐                                          │
+│  │ Embedding     │  vocab_size → hidden_size                │
+│  │ (embed_tokens)│  + Weight Tying с lm_head               │
+│  └───────┬───────┘                                          │
+│          │                                                  │
+│          ▼                                                  │
+│  ┌───────────────────────────────────────────────┐          │
+│  │              HomeBlock × N layers             │          │
+│  │  ┌─────────────────────────────────────────┐  │          │
+│  │  │ RMSNorm → Attention (+ RoPE) → Residual │  │          │
+│  │  └─────────────────────────────────────────┘  │          │
+│  │  ┌─────────────────────────────────────────┐  │          │
+│  │  │ RMSNorm → FeedForward (SwiGLU) → Resid  │  │          │
+│  │  └─────────────────────────────────────────┘  │          │
+│  └───────────────────────────────────────────────┘          │
+│          │                                                  │
+│          ▼                                                  │
+│  ┌───────────────┐                                          │
+│  │ RMSNorm       │  Финальная нормализация                  │
+│  └───────┬───────┘                                          │
+│          │                                                  │
+│          ▼                                                  │
+│  ┌───────────────┐                                          │
+│  │ LM Head       │  hidden_size → vocab_size                │
+│  │ (lm_head)     │  (веса связаны с embed_tokens)          │
+│  └───────────────┘                                          │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🔧 Ключевые технические решения
+
+### 1. RMSNorm (Root Mean Square Normalization)
+
+Вместо классического LayerNorm используется RMSNorm — более эффективная альтернатива:
+
+```python
+class RMSNorm(nn.Module):
+    def _norm(self, x):
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+    
+    def forward(self, x):
+        return self.weight * self._norm(x.float()).type_as(x)
+```
+
+**Преимущества:**
+- Быстрее LayerNorm (нет вычитания среднего)
+- Стабильное обучение
+- Используется в LLaMA, Mistral, Qwen
+
+### 2. RoPE (Rotary Position Embedding)
+
+Позиционное кодирование через вращение векторов в комплексной плоскости:
+
+```python
+def precompute_freqs_cis(dim, end, theta):
+    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2).float() / dim))
+    t = torch.arange(end)
+    freqs = torch.outer(t, freqs)
+    return torch.cos(freqs), torch.sin(freqs)
+
+def apply_rope(q, k, cos, sin, position_ids):
+    q_embed = q * cos + rotate_half(q) * sin
+    k_embed = k * cos + rotate_half(k) * sin
+    return q_embed, k_embed
+```
+
+**Преимущества:**
+- Относительные позиции "из коробки"
+- Экстраполяция на длинные контексты
+- Вычисляется один раз и кэшируется
+
+### 3. SwiGLU (Swish-Gated Linear Unit)
+
+Feed-Forward слой с гейтированием:
+
+```python
+class FeedForward(nn.Module):
+    def forward(self, x):
+        # SwiGLU: SiLU(W1·x) ⊙ W3·x → W2
+        return self.w2(self.act(self.w1(x)) * self.w3(x))
+```
+
+**Структура:**
+- `w1`: gate projection (hidden → intermediate)
+- `w3`: up projection (hidden → intermediate)
+- `w2`: down projection (intermediate → hidden)
+- Активация: SiLU (Swish)
+
+### 4. Flash Attention
+
+Автоматическое использование PyTorch SDPA при доступности:
+
+```python
+self.flash = hasattr(F, "scaled_dot_product_attention")
+
+if self.flash and seq_len > 1 and past_key_value is None:
+    output = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+else:
+    # Fallback на обычное внимание с маской
+    ...
+```
+
+**Преимущества:**
+- Экономия VRAM (O(N) вместо O(N²))
+- Быстрее на длинных последовательностях
+- Автоматический fallback
+
+### 5. KV-Cache для генерации
+
+При авторегрессивной генерации кэшируются ключи и значения:
+
+```python
+def forward(self, ..., past_key_value=None, use_cache=False):
+    # ... compute q, k, v ...
+    
+    if past_key_value is not None:
+        pk, pv = past_key_value
+        k = torch.cat([pk, k], dim=2)  # Добавляем новые к старым
+        v = torch.cat([pv, v], dim=2)
+    
+    present = (k, v) if use_cache else None
+    return output, present
+```
+
+### 6. Weight Tying
+
+Веса эмбеддингов и LM head связаны:
+
+```python
+self.lm_head.weight = self.home_model.embed_tokens.weight
+```
+
+**Преимущества:**
+- Экономия ~30% параметров
+- Лучшая генерализация
+
+---
+
+## 📊 Скрипт претрейна (pretrain.py)
+
+### Особенности
+
+| Функция | Реализация |
+|---------|------------|
+| **Масштабирование** | HuggingFace Accelerate (CPU/GPU/Multi-GPU) |
+| **Mixed Precision** | fp16 / bf16 через флаги |
+| **Gradient Checkpointing** | Опционально для экономии VRAM |
+| **Streaming Dataset** | Не загружает весь корпус в RAM |
+| **LR Schedule** | Cosine с warmup |
+| **Чекпойнты** | Совместимы с HF Hub |
+
+### Streaming Dataset
+
+```python
+class StreamingTextDataset(IterableDataset):
+    def __iter__(self):
+        worker_info = torch.utils.data.get_worker_info()
+        
+        for idx, text in enumerate(self._read_lines()):
+            # Разбиение между воркерами
+            if worker_info is not None:
+                if idx % worker_info.num_workers != worker_info.id:
+                    continue
+            
+            tokens = self.tokenizer(text, ...)
+            yield torch.tensor(tokens)
+```
+
+### Параметры командной строки
+
+```bash
+python -m homellm.training.pretrain \
+    --data_path datasets/fineweb_ru_1GB.jsonl \
+    --output_dir out/home_pretrain \
+    --arch home \
+    --hidden_size 512 \
+    --num_layers 8 \
+    --n_heads 8 \
+    --seq_len 512 \
+    --batch_size 16 \
+    --gradient_accumulation 4 \
+    --learning_rate 5e-4 \
+    --warmup_steps 1000 \
+    --fp16
+```
+
+---
+
+## 💬 CLI Chat (chat.py)
+
+### Возможности
+
+- **Интерактивный режим**: бесконечный диалог
+- **Одноразовый запрос**: через `--prompt`
+- **Streaming вывод**: токены появляются по мере генерации
+- **Совместимость**: работает с архитектурами `home` и `gpt2`
+
+### Пример использования
+
+```bash
+# Интерактивный режим
+python -m homellm.cli.chat --model_dir out/home_pretrain/final_model
+
+# Одноразовый запрос
+python -m homellm.cli.chat \
+    --model_dir out/home_pretrain/final_model \
+    --prompt "Привет, как дела?" \
+    --max_new_tokens 100 \
+    --temperature 0.8
+```
+
+---
+
+## 🚀 Быстрый старт
+
+### 1. Установка зависимостей
+
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Визуальное приложение (рекомендуется!)
+
+```bash
+./scripts/run_studio.sh
+```
+
+Откроется в браузере: http://localhost:8501
+
+Возможности:
+- 🎨 Визуальный конфигуратор модели (слайдеры, пресеты)
+- 📊 Мониторинг обучения в реальном времени (графики loss, lr)
+- 📁 Выбор датасета из списка
+- 💾 История запусков
+- ⏹️ Остановка обучения
+
+### 3. Запуск претрейна (CLI)
+
+```bash
+# С параметрами по умолчанию
+./scripts/run_pretrain.sh
+
+# С fp16 для экономии памяти
+./scripts/run_pretrain.sh --fp16
+
+# Кастомные параметры
+HIDDEN_SIZE=768 NUM_LAYERS=12 ./scripts/run_pretrain.sh --bf16
+```
+
+### 3. Тестирование модели
+
+```bash
+./scripts/run_chat.sh --prompt "Расскажи о машинном обучении"
+```
+
+---
+
+## ⚡ Distributed Training (FSDP / DeepSpeed)
+
+HomeLLM поддерживает распределённое обучение через HuggingFace Accelerate с готовыми конфигурациями.
+
+### Доступные режимы
+
+| Режим | Конфиг | Описание | Когда использовать |
+|-------|--------|----------|-------------------|
+| **Multi-GPU (DDP)** | `accelerate_multi_gpu.yaml` | Репликация модели на каждой GPU | Модель помещается в 1 GPU |
+| **FSDP** | `accelerate_fsdp.yaml` | PyTorch Fully Sharded Data Parallel | Модель >1B параметров, несколько GPU |
+| **DeepSpeed ZeRO-2** | `accelerate_deepspeed_zero2.yaml` | Шардирование оптимизатора и градиентов | 100M-1B параметров |
+| **DeepSpeed ZeRO-3** | `accelerate_deepspeed_zero3.yaml` | Полное шардирование | >1B параметров |
+| **ZeRO-3 + Offload** | `accelerate_deepspeed_zero3_offload.yaml` | Шардирование + offload на CPU | Очень большие модели, 1 GPU |
+
+### Быстрый запуск
+
+```bash
+# Multi-GPU (DDP)
+DISTRIBUTED=multi_gpu ./scripts/run_pretrain.sh --bf16
+
+# FSDP (рекомендуется для больших моделей)
+DISTRIBUTED=fsdp ./scripts/run_pretrain.sh --bf16
+
+# DeepSpeed ZeRO-2
+DISTRIBUTED=deepspeed_zero2 ./scripts/run_pretrain.sh
+
+# DeepSpeed ZeRO-3
+DISTRIBUTED=deepspeed_zero3 ./scripts/run_pretrain.sh
+
+# ZeRO-3 + CPU Offload (для ограниченной VRAM)
+DISTRIBUTED=deepspeed_zero3_offload ./scripts/run_pretrain.sh
+```
+
+### Сравнение стратегий
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Использование VRAM                               │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  DDP:        [████████████████████] Model + Optimizer + Gradients   │
+│                                                                     │
+│  ZeRO-2:     [████████████] Model  [шардировано: Opt + Grad]        │
+│                                                                     │
+│  ZeRO-3:     [████] [всё шардировано между GPU]                     │
+│                                                                     │
+│  ZeRO-3+Off: [██] [шардировано + offload на CPU]                    │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### FSDP vs DeepSpeed
+
+| Критерий | FSDP | DeepSpeed |
+|----------|------|-----------|
+| **Зависимости** | Только PyTorch | deepspeed пакет |
+| **Совместимость** | PyTorch native | Свой backend |
+| **CPU Offload** | Базовый | Продвинутый (ZeRO-Infinity) |
+| **NVMe Offload** | Нет | Да (ZeRO-Infinity) |
+| **Сообщество** | PyTorch | Microsoft |
+
+### Настройка количества GPU
+
+```bash
+# Автоматически определяет все доступные GPU
+DISTRIBUTED=fsdp ./scripts/run_pretrain.sh
+
+# Явное указание количества GPU
+NUM_GPUS=4 DISTRIBUTED=fsdp ./scripts/run_pretrain.sh
+
+# Выбор конкретных GPU
+CUDA_VISIBLE_DEVICES=0,1 DISTRIBUTED=fsdp ./scripts/run_pretrain.sh
+```
+
+### Ручной запуск через accelerate
+
+```bash
+# С конфигом
+accelerate launch --config_file configs/accelerate_fsdp.yaml \
+    -m homellm.training.pretrain \
+    --data_path datasets/fineweb_ru_1GB.jsonl \
+    --output_dir out/home_pretrain \
+    --arch home
+
+# Интерактивная настройка (создаёт свой конфиг)
+accelerate config
+accelerate launch -m homellm.training.pretrain --data_path ...
+```
+
+---
+
+## 📈 Размеры моделей
+
+| Конфигурация | Параметры | VRAM (fp16) | Рекомендация |
+|--------------|-----------|-------------|--------------|
+| 512-8-8 | ~25M | ~2 GB | GTX 1060+ |
+| 768-12-12 | ~80M | ~4 GB | RTX 2060+ |
+| 1024-16-16 | ~200M | ~8 GB | RTX 3080+ |
+
+Формула: `hidden-layers-heads`
+
+---
+
+## 🔗 Интеграция с HuggingFace
+
+Модель полностью совместима с экосистемой HuggingFace:
+
+```python
+from homellm.models import HomeConfig, HomeForCausalLM
+from transformers import AutoTokenizer
+
+# Загрузка
+tokenizer = AutoTokenizer.from_pretrained("gpt2")
+model = HomeForCausalLM.from_pretrained("out/home_pretrain/final_model")
+
+# Генерация
+inputs = tokenizer("Привет", return_tensors="pt")
+outputs = model.generate(**inputs, max_new_tokens=50)
+print(tokenizer.decode(outputs[0]))
+```
+
+---
+
+## 📝 Формат датасета
+
+Поддерживаются два формата:
+
+### JSONL (рекомендуется)
+```json
+{"text": "Первый документ..."}
+{"text": "Второй документ..."}
+```
+
+### Plain text
+```
+Первая строка — один документ
+Вторая строка — другой документ
+```
+
+---
+
+## 🛠 Зависимости
+
+### Обязательные
+
+| Пакет | Версия | Назначение |
+|-------|--------|------------|
+| torch | ≥2.0.0 | PyTorch с Flash Attention |
+| transformers | ≥4.40.0 | Токенизаторы, базовые классы |
+| accelerate | ≥0.28.0 | Distributed training |
+| tqdm | ≥4.66.0 | Progress bars |
+
+### Для DeepSpeed (опционально)
+
+| Пакет | Версия | Назначение |
+|-------|--------|------------|
+| deepspeed | ≥0.14.0 | ZeRO optimizer, offloading |
+| ninja | latest | Быстрая JIT-компиляция DeepSpeed ops |
+
+---
+
+## 📄 Лицензия
+
+См. файл `LICENSE` в корне проекта.
+

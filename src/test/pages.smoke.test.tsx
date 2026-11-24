@@ -311,6 +311,11 @@ describe('page smoke tests', () => {
       await act(async () => { await queryClient.invalidateQueries({ queryKey: ['vla'] }) })
       await screen.findByText('Policy export: /policy')
       expect(screen.getByText('Эксперимент vla_existing')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('tab', { name: 'История' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Дообучить GRPO' }))
+      expect(screen.getByLabelText('VLA algorithm')).toHaveValue('grpo')
+      expect(screen.getByLabelText('Начальная VLA policy (опционально)')).toHaveValue('/policy')
+      expect(screen.getByRole('button', { name: 'Начать VLA обучение' })).toBeDisabled()
       fireEvent.click(screen.getByRole('tab', { name: 'Action preview' }))
       expect(screen.getByLabelText('State JSON')).toHaveValue('[]')
     } finally { queryClient.clear() }
@@ -412,6 +417,64 @@ describe('page smoke tests', () => {
       await waitFor(() => expect(started).toMatchObject({ stage: 'vla_sft', domain: 'simulation', action_type: 'hybrid', discrete_classes: [6], state_dim: 0 }))
       expect(capturedErrors).toHaveLength(0)
     } finally { queryClient.clear() }
+  })
+
+  it('launches the selected VLA GRPO method and invalidates preflight when sampling changes',async()=>{
+    let started: Record<string,unknown>|null=null
+    vi.mocked(fetch).mockImplementation(async(input,options)=>{
+      const url=String(input)
+      if(url.endsWith('/vla/preflight')) return makeResponse({ready:true,checks:[],sample:null})
+      if(url.endsWith('/vla/start')) {started=JSON.parse(String(options?.body));return makeResponse({run_id:'vla_grpo_test'})}
+      return makeResponse(payloadFor(url))
+    })
+    const {queryClient}=renderAt('/vla')
+    try {
+      fireEvent.change(await screen.findByLabelText('VLA algorithm'),{target:{value:'dapo'}})
+      expect(screen.getByText(/Reward: близость sampled action chunks/)).toBeInTheDocument()
+      fireEvent.change(screen.getByLabelText('Демонстрации JSONL'),{target:{value:'/actions.jsonl'}})
+      fireEvent.change(screen.getByLabelText('Начальная VLA policy (опционально)'),{target:{value:'/sft/final_model'}})
+      fireEvent.click(screen.getByRole('button',{name:'Проверить VLA'}));await screen.findByText('VLA проверка пройдена')
+      const start=screen.getByRole('button',{name:'Начать VLA обучение'});expect(start).toBeEnabled()
+      fireEvent.change(screen.getByLabelText('Action chunks в группе'),{target:{value:'4'}})
+      expect(start).toBeDisabled()
+      fireEvent.click(screen.getByRole('button',{name:'Проверить VLA'}));await screen.findByText('VLA проверка пройдена')
+      fireEvent.click(start)
+      await waitFor(()=>expect(started).toMatchObject({stage:'vla_grpo',training_algorithm:'dapo',grpo_group_size:4,initial_policy_path:'/sft/final_model'}))
+    } finally {queryClient.clear()}
+  })
+
+  it.each(['/vla','/vlm'])('exposes bounded NGU sampling and sends its configuration from %s',async route=>{
+    let started: Record<string,unknown>|null=null
+    vi.mocked(fetch).mockImplementation(async(input,options)=>{
+      const url=String(input)
+      if(url.endsWith('/preflight')) return makeResponse({ready:true,checks:[],datasets:[],sample:null})
+      if(url.endsWith('/start')) {started=JSON.parse(String(options?.body));return makeResponse({run_id:'ngu_test'})}
+      return makeResponse(payloadFor(url))
+    })
+    const {queryClient}=renderAt(route)
+    try {
+      if(route==='/vla'){
+        fireEvent.change(await screen.findByLabelText('VLA algorithm'),{target:{value:'ngu'}})
+        expect(screen.getByLabelText('NGU: допустимый RMSE continuous (норм.)')).toHaveValue(.5)
+        fireEvent.change(screen.getByLabelText('Демонстрации JSONL'),{target:{value:'/actions.jsonl'}})
+        fireEvent.click(screen.getByRole('button',{name:'Проверить VLA'}));await screen.findByText('VLA проверка пройдена')
+        fireEvent.change(screen.getByLabelText('NGU: максимум раундов на наблюдение'),{target:{value:'5'}})
+        expect(screen.getByRole('button',{name:'Начать VLA обучение'})).toBeDisabled()
+        fireEvent.click(screen.getByRole('button',{name:'Проверить VLA'}));await screen.findByText('VLA проверка пройдена')
+        fireEvent.click(screen.getByRole('button',{name:'Начать VLA обучение'}))
+        await waitFor(()=>expect(started).toMatchObject({training_algorithm:'ngu',ngu_max_attempts:5,ngu_action_tolerance:.5}))
+      }else{
+        const choice=await screen.findByRole('option',{name:/^VLM GRPO$/i});fireEvent.change(choice.closest('select')!,{target:{value:'vlm_grpo'}})
+        fireEvent.change(screen.getByLabelText('VLM GRPO algorithm'),{target:{value:'ngu'}})
+        expect(screen.getByLabelText('VLM NGU probability')).toHaveValue(.9)
+        fireEvent.change(screen.getByLabelText('VLM NGU attempts'),{target:{value:'5'}})
+        fireEvent.change(screen.getByPlaceholderText('e.g. Qwen/Qwen3.5-0.8B'),{target:{value:'/model'}})
+        fireEvent.change(screen.getByPlaceholderText('datasets/my_vlm_dataset.jsonl'),{target:{value:'/data.jsonl'}})
+        fireEvent.click(screen.getByRole('button',{name:'Проверить эксперимент'}));await screen.findByText('Проверка пройдена')
+        fireEvent.click(screen.getByRole('button',{name:/Start Training/i}))
+        await waitFor(()=>expect(started).toMatchObject({grpo_algorithm:'ngu',ngu_max_attempts:5}))
+      }
+    }finally{queryClient.clear()}
   })
 
   it('requires a current successful VLM preflight and ignores stale responses', async () => {

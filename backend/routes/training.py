@@ -390,7 +390,7 @@ def continue_training(run_id: str, options: ResumeRequest | None = None):
         raise HTTPException(400, "This GRPO runtime does not support checkpoint resume")
     if config.get('stage') == 'vlm_grpo' and config.get('vlm_worker_version') != 3:
         raise HTTPException(400, 'Legacy reward-filtered SFT or TRL checkpoints cannot resume as native VLM GRPO; start a new policy run')
-    if config.get('stage') == 'vla_sft' and config.get('vla_worker_version') != 1:
+    if config.get('stage') in ('vla_sft','vla_grpo') and config.get('vla_worker_version') != 1:
         raise HTTPException(400, 'Unsupported VLA checkpoint version')
     if config.get('stage') == 'world_model' and config.get('world_worker_version') != 1:
         raise HTTPException(400, 'Unsupported world model checkpoint version')
@@ -398,7 +398,7 @@ def continue_training(run_id: str, options: ResumeRequest | None = None):
         raise HTTPException(400, 'Foundation generation/download jobs are not training checkpoints')
     artifact_dir = _artifact_dir(config, run_id)
     checkpoints = [p for p in artifact_dir.glob("checkpoint*") if p.is_dir()]
-    if config.get('stage') == 'vla_sft':
+    if config.get('stage') in ('vla_sft','vla_grpo'):
         from backend.routes.vla import complete_checkpoint
         checkpoints = [p for p in checkpoints if complete_checkpoint(p)]
     if config.get('stage') == 'world_model':
@@ -420,7 +420,7 @@ def continue_training(run_id: str, options: ResumeRequest | None = None):
     config["resume_from_checkpoint"] = str(checkpoint.resolve())
     config["resumed_from_run"] = run_id
     config["output_dir"] = str(artifact_dir.parent)
-    if config.get('stage') == 'vla_sft':
+    if config.get('stage') in ('vla_sft','vla_grpo'):
         from backend.routes.vla import VLATrainingRequest, start
         return start(VLATrainingRequest(**config))
     if config.get('stage') == 'world_model':
